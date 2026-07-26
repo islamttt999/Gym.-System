@@ -1024,7 +1024,6 @@ function renderInvitationCell(m){
   if(remaining<=0) return `<span class="badge" style="background:rgba(107,118,136,0.14); color:var(--text-tertiary);" title="${esc(t('invitationsExhausted_','لا توجد دعوات متبقية'))}">${icon('userplus',11)} 0/${numAr(total)}</span>`;
   return `<button class="badge badge-info invitation-pill" data-useinvite="${m.id}" title="${esc(t('useInvitation_','اضغط عند حضور ضيف مع العضو'))}">${icon('userplus',11)} ${numAr(remaining)}/${numAr(total)}</button>`;
 }
-const STATUS_TEXT = {active:'نشط', warning:'ينتهي قريباً', expired:'منتهي'};
 function statusText(status){ return App.lang==='en' ? (I18N.en.status[status]||status) : STATUS_TEXT[status]; }
 const STATUS_COLOR = {active:'#10B981', warning:'#F59E0B', expired:'#F43F5E'};
 /* Builds a status-aware WhatsApp message: renewal reminder if expiring/expired, else a general check-in. */
