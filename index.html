@@ -1210,7 +1210,7 @@ function monthLabel(ym){
 
 
 const App = {
-  db: loadDB(),
+  db: JSON.parse(JSON.stringify(DEFAULTS)),
   currentPage: 'dashboard',
   isLoggedIn: false,
   currentUser: null,
@@ -4340,10 +4340,19 @@ function bindUserProfileEvents(){
 }
 
 /* ============ INIT ============ */
-applyDocDir();
-setupGlobalScanner();
-setupProfileMenu();
-render();
+async function initApp(){
+  try{
+    App.db = await loadDB();
+  }catch(e){
+    console.error('loadDB failed, falling back to defaults:', e);
+    App.db = JSON.parse(JSON.stringify(DEFAULTS));
+  }
+  applyDocDir();
+  setupGlobalScanner();
+  setupProfileMenu();
+  render();
+}
+initApp();
 </script>
 </body>
 </html>
