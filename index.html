@@ -1025,7 +1025,6 @@ function renderInvitationCell(m){
   return `<button class="badge badge-info invitation-pill" data-useinvite="${m.id}" title="${esc(t('useInvitation_','اضغط عند حضور ضيف مع العضو'))}">${icon('userplus',11)} ${numAr(remaining)}/${numAr(total)}</button>`;
 }
 function statusText(status){ return App.lang==='en' ? (I18N.en.status[status]||status) : STATUS_TEXT[status]; }
-const STATUS_COLOR = {active:'#10B981', warning:'#F59E0B', expired:'#F43F5E'};
 /* Builds a status-aware WhatsApp message: renewal reminder if expiring/expired, else a general check-in. */
 function waMessage(m, db){
   const status = getMemberStatus(m);
@@ -1153,7 +1152,6 @@ function getNewMembersGrowth(db, monthsBack){
   }
   return pts;
 }
-const DONUT_COLORS = ['var(--blue)','var(--cyan)','var(--gold)','var(--purple)','var(--success)'];
 function getPackageDistribution(db){
   const active = db.members.filter(m=>getMemberStatus(m)!=='expired');
   const byPkg = {};
