@@ -331,7 +331,6 @@ select.f-input{cursor:pointer;}
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<base target="_blank">
 </head>
 <body>
 <div id="root"></div>
@@ -1207,77 +1206,6 @@ function monthLabel(ym){
   return d.toLocaleDateString(App.lang==='en'?'en-US':'ar-EG-u-nu-latn', {month:'long', year:'numeric'});
 }
 
-  gym:{ name:'GymPro', phone:'0551234567', address:'الرياض — حي النزهة', hours:'6 صباحاً – 12 منتصف الليل', adminName:'أحمد المالك', currency:'SAR', currencySymbol:'ر.س', phonePrefix:'+966', notifications:{expiry:true,followup:true,dailyReport:false,attendance:true} },
-  settings:{ name:'GymPro', phone:'0551234567', address:'الرياض — حي النزهة', hours:'6 صباحاً – 12 منتصف الليل', adminName:'أحمد المالك', currency:'SAR', currencySymbol:'ر.س', phonePrefix:'+966', notifications:{expiry:true,followup:true,dailyReport:false,attendance:true} },
-  packages:[
-    {id:'pkg1',name:'شهري',price:200,duration:30,active:true},
-    {id:'pkg2',name:'3 أشهر',price:500,duration:90,active:true},
-    {id:'pkg3',name:'6 أشهر',price:900,duration:180,active:true},
-    {id:'pkg4',name:'سنوي',price:1800,duration:365,active:true},
-    {id:'pkg5',name:'طلاب',price:150,duration:30,active:true},
-  ],
-  trainers:[
-    {id:'t1',name:'أحمد ناصر القحطاني',specialty:'لياقة عامة وكمال',phone:'0501112222',salary:3500,commissionPct:15,status:'active',code:'TR001'},
-    {id:'t2',name:'فيصل العمري',specialty:'كمال الأجسام',phone:'0503334444',salary:3000,commissionPct:12,status:'active',code:'TR002'},
-    {id:'t3',name:'عمر الشهري',specialty:'يوغا واسترخاء',phone:'0505556666',salary:2800,commissionPct:10,status:'active',code:'TR003'},
-    {id:'t4',name:'سلمى الدوسري',specialty:'زومبا ورياضة نسائية',phone:'0507778888',salary:2500,commissionPct:8,status:'active',code:'TR004'},
-  ],
-  members:[
-    {id:'m1',code:'GYM-0001',name:'محمد علي السهلي',phone:'0501234567',dob:'1990-05-15',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'',startDate:'2025-06-01',endDate:'2025-07-01',paid:200,remaining:0,payMethod:'نقدي',notes:'',created:'2025-06-01'},
-    {id:'m2',code:'GYM-0002',name:'سارة أحمد الزهراني',phone:'0557891234',dob:'1995-08-20',gender:'أنثى',address:'الرياض',packageId:'pkg2',trainerId:'t1',startDate:'2025-05-15',endDate:'2025-08-15',paid:400,remaining:100,payMethod:'مدى',notes:'',created:'2025-05-15',privatePkgId:'pp2',privatePaid:800,privateRemaining:300},
-    {id:'m3',code:'GYM-0003',name:'خالد محمود العمري',phone:'0551234890',dob:'1988-03-10',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'',startDate:'2025-05-14',endDate:'2025-06-14',paid:200,remaining:0,payMethod:'نقدي',notes:'',created:'2025-05-14'},
-    {id:'m4',code:'GYM-0004',name:'نورة سعيد الشمري',phone:'0509876543',dob:'1992-12-01',gender:'أنثى',address:'الرياض',packageId:'pkg4',trainerId:'t4',startDate:'2025-01-01',endDate:'2026-01-01',paid:1800,remaining:0,payMethod:'تحويل',notes:'',created:'2025-01-01'},
-    {id:'m5',code:'GYM-0005',name:'عبدالله فهد القرني',phone:'0551237890',dob:'1993-07-22',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'',startDate:'2025-06-09',endDate:'2025-07-09',paid:150,remaining:50,payMethod:'نقدي',notes:'',created:'2025-06-09'},
-    {id:'m6',code:'GYM-0006',name:'ريم الغامدي',phone:'0559871234',dob:'1997-04-18',gender:'أنثى',address:'الرياض',packageId:'pkg2',trainerId:'',startDate:'2025-02-20',endDate:'2025-05-20',paid:500,remaining:0,payMethod:'مدى',notes:'',created:'2025-02-20'},
-    {id:'m7',code:'GYM-0007',name:'فهد الحربي',phone:'0551112233',dob:'1985-11-30',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'t2',startDate:'2025-04-28',endDate:'2025-05-28',paid:200,remaining:0,payMethod:'نقدي',notes:'',created:'2025-04-28'},
-  ],
-  attendance:[
-    {id:'a1',memberId:'m1',memberName:'محمد علي',date:getTodayStr(),time:'06:32',type:'in'},
-    {id:'a2',memberId:'m2',memberName:'سارة أحمد',date:getTodayStr(),time:'07:15',type:'in'},
-    {id:'a3',memberId:'m3',memberName:'خالد محمود',date:getTodayStr(),time:'08:00',type:'out'},
-    {id:'a4',memberId:'m4',memberName:'نورة سعيد',date:getTodayStr(),time:'08:45',type:'in'},
-    {id:'a5',memberId:'m5',memberName:'عبدالله فهد',date:getTodayStr(),time:'09:10',type:'in'},
-  ],
-  transactions:[
-    {id:'tx1',date:getTodayStr(),type:'إيراد',category:'اشتراك',desc:'اشتراك جديد — محمد علي',amount:200,method:'نقدي',positive:true},
-    {id:'tx2',date:getTodayStr(),type:'إيراد',category:'بريفيت',desc:'بريفيت — سارة أحمد',amount:600,method:'مدى',positive:true},
-    {id:'tx3',date:'2025-06-08',type:'مصروف',category:'رواتب',desc:'رواتب المدربين',amount:12800,method:'تحويل',positive:false},
-    {id:'tx4',date:'2025-06-08',type:'إيراد',category:'اشتراك',desc:'تجديد اشتراك — نورة سعيد',amount:1800,method:'تحويل',positive:true},
-    {id:'tx5',date:'2025-06-07',type:'مصروف',category:'فواتير',desc:'فاتورة كهرباء',amount:850,method:'تحويل',positive:false},
-    {id:'tx6',date:'2025-06-06',type:'إيراد',category:'اشتراك',desc:'اشتراك — عبدالله فهد',amount:200,method:'نقدي',positive:true},
-    {id:'tx7',date:'2025-06-05',type:'مصروف',category:'صيانة',desc:'صيانة أجهزة',amount:450,method:'نقدي',positive:false},
-  ],
-  privateSessions:[
-    {id:'ps1',clientId:'m2',clientName:'سارة أحمد',trainerId:'t1',trainerName:'أحمد ناصر',packageName:'8 جلسات',sessionsTotal:8,sessionsDone:3,startDate:'2025-06-01'},
-  ],
-  privatePkgs:[
-    {id:'pp1',name:'4 جلسات',price:600,duration:4,active:true},
-    {id:'pp2',name:'8 جلسات',price:1100,duration:8,active:true},
-    {id:'pp3',name:'12 جلسة',price:1500,duration:12,active:true},
-    {id:'pp4',name:'20 جلسة',price:2400,duration:20,active:true},
-  ],
-  classes:[
-    {id:'cl1',name:'كروسفت',trainerId:'t1',capacity:20,enrolled:14,time:'06:00',days:['السبت','الاثنين','الأربعاء']},
-    {id:'cl2',name:'يوغا',trainerId:'t3',capacity:15,enrolled:9,time:'17:00',days:['الأحد','الثلاثاء','الخميس']},
-    {id:'cl3',name:'زومبا',trainerId:'t4',capacity:25,enrolled:20,time:'19:00',days:['السبت','الاثنين','الأربعاء']},
-  ],
-  schedule:[
-    {id:'sc1',classId:'cl1',day:'السبت',time:'06:00'},
-    {id:'sc2',classId:'cl2',day:'الأحد',time:'17:00'},
-    {id:'sc3',classId:'cl3',day:'السبت',time:'19:00'},
-    {id:'sc4',classId:'cl1',day:'الاثنين',time:'06:00'},
-    {id:'sc5',classId:'cl2',day:'الثلاثاء',time:'17:00'},
-    {id:'sc6',classId:'cl3',day:'الاثنين',time:'19:00'},
-  ],
-  systemUsers:[
-    {id:'su1',username:'admin',password:'1234',role:'owner',name:'أحمد المالك',status:'active',perms:{dashboard:true,members:true,addMember:true,packages:true,trainers:true,private:true,attendance:true,finance:true,reports:true,settings:true}},
-    {id:'su2',username:'reception',password:'1234',role:'reception',name:'سلمى الكاشف',status:'active',perms:{dashboard:true,members:true,addMember:true,packages:false,trainers:false,private:true,attendance:true,finance:false,reports:false,settings:false}},
-    {id:'su3',username:'accountant',password:'1234',role:'accountant',name:'فهد المحاسب',status:'active',perms:{dashboard:true,members:false,addMember:false,packages:false,trainers:false,private:false,attendance:false,finance:true,reports:true,settings:false}},
-  ],
-  pendingUsers:[],
-  trainerAttendance:[],
-  salaryPayments:[],
-};
 
 
 
