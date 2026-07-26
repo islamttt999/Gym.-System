@@ -329,6 +329,9 @@ select.f-input{cursor:pointer;}
 .checkin-notice .ci-row{display:flex; align-items:center; gap:6px; margin-top:8px; font-size:var(--fs-caption); font-weight:700; padding:5px 10px; border-radius:8px; width:fit-content;}
 .checkin-notice .ci-close{margin-inline-start:auto; background:transparent; border:none; color:var(--text-tertiary); cursor:pointer; flex-shrink:0;}
 </style>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<base target="_blank">
 </head>
 <body>
 <div id="root"></div>
@@ -413,396 +416,214 @@ function waLink(phone, prefix){
 }
 
 /* ============ DB LAYER ============ */
-const DB_KEY = 'gymproDb_merged_v1';
-function getTodayStr(){ return new Date().toISOString().split('T')[0]; }
-function genId(prefix){ return (prefix||'id') + Date.now() + Math.random().toString(36).substr(2,5); }
-function formatDate(d){ if(!d) return '—'; return new Date(d).toLocaleDateString(App.lang==='en'?'en-US':'ar-EG-u-nu-latn',{year:'numeric',month:'short',day:'numeric'}); }
-function numAr(n){ return (n||0).toLocaleString(App.lang==='en'?'en-US':'ar-EG-u-nu-latn'); }
-function esc(str){ if(!str) return ''; return String(str).replace(/[<>'"]/g, m=>({'<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}[m])); }
-/* Two-letter initials for avatars — a single Arabic letter (e.g. "ا") often reads as just a bare stroke,
-   so we use the first letter of each of the first two words when available, matching common app conventions. */
-function getInitials(name){
-  const s = String(name||'').trim();
-  if(!s) return '؟';
-  const parts = s.split(/\s+/).filter(Boolean);
-  if(parts.length>=2) return (parts[0][0]||'')+(parts[1][0]||'');
-  return parts[0].slice(0,2);
-}
-function getAge(dob){
-  if(!dob) return '—';
-  const b=new Date(dob), t=new Date();
-  let age = t.getFullYear()-b.getFullYear();
-  const m = t.getMonth()-b.getMonth();
-  if(m<0 || (m===0 && t.getDate()<b.getDate())) age--;
-  return age>=0 ? age+' سنة' : '—';
-}
-function nextMemberCode(members){
-  const codes = members.map(m=>parseInt((m.code||'GYM-0000').split('-')[1]||'0'));
-  const max = codes.length?Math.max(...codes):0;
-  return 'GYM-'+String(max+1).padStart(4,'0');
-}
-function nextTrainerCode(trainers){
-  const codes = trainers.map(t=>parseInt((t.code||'TR000').replace('TR','')||'0'));
-  const max = codes.length?Math.max(...codes):0;
-  return 'TR'+String(max+1).padStart(3,'0');
-}
-function getDaysLeft(endDate){
-  if(!endDate) return -1;
-  const end = new Date(endDate+'T00:00:00');
-  const today = new Date(); today.setHours(0,0,0,0);
-  return Math.round((end-today)/86400000);
-}
-function getMemberStatus(m){
-  const d = getDaysLeft(m.endDate);
-  if(d<0) return 'expired';
-  if(d<=7) return 'warning';
-  return 'active';
-}
-/* Finds a member's private-training session (most recently started one, if several) and its status:
-   'active' (in progress), 'completed' (finished all days), or null (no private package). */
-function getMemberPrivateSession(db, memberId){
-  const sessions = db.privateSessions.filter(s=>s.clientId===memberId);
-  if(!sessions.length) return null;
-  return sessions.slice().sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''))[0];
-}
-function getMemberPrivateStatus(db, memberId){
-  const s = getMemberPrivateSession(db, memberId);
-  if(!s) return null;
-  return (s.status==='completed' || s.sessionLog.length>=s.sessionsTotal) ? 'completed' : 'active';
-}
-function renderPrivateBadge(db, memberId){
-  const st = getMemberPrivateStatus(db, memberId);
-  if(st==='active') return `<span class="badge badge-info">${icon('award',11)} نشط</span>`;
-  if(st==='completed') return `<span class="badge" style="background:rgba(107,118,136,0.14); color:var(--text-tertiary);">منتهي</span>`;
-  return `<span style="color:var(--text-muted); font-size:var(--fs-caption);">—</span>`;
-}
-/* Clickable guest-invitation counter — click uses up one pass (only when the member actually brings a guest). */
-function renderInvitationCell(m){
-  const total = m.invitationsTotal||0;
-  const remaining = m.invitationsRemaining||0;
-  if(total<=0) return `<span style="color:var(--text-muted); font-size:var(--fs-caption);">—</span>`;
-  if(remaining<=0) return `<span class="badge" style="background:rgba(107,118,136,0.14); color:var(--text-tertiary);" title="${esc(t('invitationsExhausted_','لا توجد دعوات متبقية'))}">${icon('userplus',11)} 0/${numAr(total)}</span>`;
-  return `<button class="badge badge-info invitation-pill" data-useinvite="${m.id}" title="${esc(t('useInvitation_','اضغط عند حضور ضيف مع العضو'))}">${icon('userplus',11)} ${numAr(remaining)}/${numAr(total)}</button>`;
-}
-const STATUS_TEXT = {active:'نشط', warning:'ينتهي قريباً', expired:'منتهي'};
-function statusText(status){ return App.lang==='en' ? (I18N.en.status[status]||status) : STATUS_TEXT[status]; }
-const STATUS_COLOR = {active:'#10B981', warning:'#F59E0B', expired:'#F43F5E'};
-/* Builds a status-aware WhatsApp message: renewal reminder if expiring/expired, else a general check-in. */
-function waMessage(m, db){
-  const status = getMemberStatus(m);
-  const gymName = db.settings.name || db.gym.name;
-  let msg;
-  if(App.lang==='en'){
-    if(status==='expired') msg = `Hi ${m.name}, your membership at ${gymName} has expired. Would you like to renew it?`;
-    else if(status==='warning') msg = `Hi ${m.name}, your membership at ${gymName} is expiring in ${getDaysLeft(m.endDate)} days. Want to renew now?`;
-    else msg = `Hi ${m.name}, this is ${gymName}. How can we help you today?`;
-  } else {
-    if(status==='expired') msg = `مرحباً ${m.name}، اشتراكك في ${gymName} انتهى. حابب تجدده؟`;
-    else if(status==='warning') msg = `مرحباً ${m.name}، اشتراكك في ${gymName} هينتهي خلال ${getDaysLeft(m.endDate)} يوم. حابب تجدده دلوقتي؟`;
-    else msg = `مرحباً ${m.name}، معاك ${gymName}، إزاي نقدر نساعدك؟`;
-  }
-  return msg;
-}
-function getMonthlyRevenue(tx, ym){ ym = ym || getTodayStr().slice(0,7); return tx.filter(t=>t.positive && t.date && t.date.startsWith(ym)).reduce((s,t)=>s+t.amount,0); }
-function getMonthlyExpenses(tx, ym){ ym = ym || getTodayStr().slice(0,7); return tx.filter(t=>!t.positive && t.date && t.date.startsWith(ym)).reduce((s,t)=>s+t.amount,0); }
-/* Filters transactions by either an explicit from/to date range, or (if no range set) a single YYYY-MM month, or all time if month==='all'. */
-function filterTransactionsByPeriod(tx, month, from, to){
-  if(from && to) return tx.filter(t=> t.date && t.date>=from && t.date<=to);
-  if(month && month!=='all') return tx.filter(t=> t.date && t.date.startsWith(month));
-  return tx;
-}
-function getAvailableTxMonths(db){
-  const set = new Set();
-  db.transactions.forEach(t=>{ if(t.date) set.add(t.date.slice(0,7)); });
-  set.add(getTodayStr().slice(0,7));
-  return Array.from(set).sort().reverse();
-}
-function getTodayRevenue(tx){ return tx.filter(t=>t.positive && t.date===getTodayStr()).reduce((s,t)=>s+t.amount,0); }
-function getTodayAttendance(att){ return att.filter(a=>a.date===getTodayStr() && a.type==='in').length; }
-function getCurrentPeriod(){ const n=new Date(); return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0'); }
-function formatPeriod(period){ if(!period) return '—'; const [y,m]=period.split('-'); return new Date(Number(y),Number(m)-1,1).toLocaleDateString('ar-EG-u-nu-latn',{month:'long',year:'numeric'}); }
-function daysSinceDate(dateStr){
-  if(!dateStr) return 0;
-  const d = new Date(dateStr+'T00:00:00');
-  const today = new Date(); today.setHours(0,0,0,0);
-  return Math.round((today-d)/86400000);
-}
-function getInactiveMembers(members, attendance){
-  return members.filter(m=>getMemberStatus(m)!=='expired').map(m=>{
-    const recs = attendance.filter(a=>a.memberId===m.id).sort((a,b)=>{
-      const ad=new Date((a.date||'')+' '+(a.time||'')), bd=new Date((b.date||'')+' '+(b.time||''));
-      return bd-ad;
-    });
-    const last = recs[0];
-    const since = last ? daysSinceDate(last.date) : daysSinceDate(m.startDate);
-    return Object.assign({}, m, {daysSince:since, lastDate:last?last.date:null});
-  }).filter(m=>m.daysSince>=7).sort((a,b)=>b.daysSince-a.daysSince);
-}
-function timeToMinutes(str){ if(!str) return 0; const [h,m] = str.split(':').map(Number); return h*60+(m||0); }
-/* Lateness = minutes checked in after the trainer's own shift start.
-   Early-leave = minutes checked out before the trainer's own shift end.
-   Both count toward the deduction, matching each trainer's individually agreed shift times. */
-function calcLateEarly(trainer, checkIn, checkOut){
-  const shiftStart = timeToMinutes(trainer.shiftStart||'09:00');
-  const shiftEnd = timeToMinutes(trainer.shiftEnd||'17:00');
-  const inMin = timeToMinutes(checkIn);
-  const outMin = checkOut ? timeToMinutes(checkOut) : null;
-  const lateMinutes = Math.max(0, inMin - shiftStart);
-  const earlyMinutes = (outMin!==null) ? Math.max(0, shiftEnd - outMin) : 0;
-  return { lateMinutes, earlyMinutes, shortfallMinutes: lateMinutes + earlyMinutes };
-}
-/* Professional tiered deduction based on total lateness + early-leave minutes against the trainer's own shift.
-   Up to 2h shortfall → quarter-day deduction, up to 4h → half-day, more → full-day. */
-function calcAttendanceDeduction(shortfallMinutes){
-  const hours = shortfallMinutes/60;
-  if(hours <= 0) return { fraction:0, missing:0, label:'لا يوجد خصم', labelEn:'No deduction' };
-  if(hours <= 2) return { fraction:0.25, missing:hours, label:'خصم ربع يوم', labelEn:'Quarter-day deduction' };
-  if(hours <= 4) return { fraction:0.5, missing:hours, label:'خصم نص يوم', labelEn:'Half-day deduction' };
-  return { fraction:1, missing:hours, label:'خصم يوم كامل', labelEn:'Full-day deduction' };
-}
-function getTrainerDailyRate(trainer){ return (trainer.salary||0) / 30; }
-function getTrainerFinancials(trainer, db){
-  const paidSalaries = db.salaryPayments.filter(p=>p.trainerId===trainer.id);
-  const totalPaidComm = paidSalaries.reduce((s,p)=>s+(p.commissionAmount||0),0);
-  const totalPaidSalary = paidSalaries.reduce((s,p)=>s+(p.salaryAmount||0),0);
-  const clients = db.members.filter(m=>m.trainerId===trainer.id);
-  const privateClients = db.privateSessions.filter(s=>s.trainerId===trainer.id);
-  const subsRevenue = clients.reduce((s,m)=>s+(m.paid||0),0);
-  const privateRevenue = privateClients.reduce((s,p)=>{
-    const member = db.members.find(m=>m.id===p.clientId);
-    return s + (member ? (member.privatePaid||0) : 0);
-  },0);
-  const totalRevenue = subsRevenue + privateRevenue;
-  const totalCommission = Math.round(totalRevenue * (trainer.commissionPct||0) / 100);
-  const pendingCommission = Math.max(0, totalCommission - totalPaidComm);
-  const ym = getTodayStr().slice(0,7);
-  const dailyRate = getTrainerDailyRate(trainer);
-  const monthAttendance = db.trainerAttendance.filter(r=>r.trainerId===trainer.id && r.date && r.date.startsWith(ym) && r.checkOut);
-  const totalDeductionAmount = Math.round(monthAttendance.reduce((s,r)=>s+((r.deductionFraction||0)*dailyRate),0));
-  const totalAdvances = db.transactions.filter(t=>t.category==='سلفة موظف' && t.trainerId===trainer.id && t.date && t.date.startsWith(ym)).reduce((s,t)=>s+(t.amount||0),0);
-  const netSalaryAfterDeductions = Math.max(0, (trainer.salary||0) - totalDeductionAmount - totalAdvances);
-  return { clients: clients.length, subsRevenue, privateRevenue, totalRevenue, totalCommission, totalPaidComm, totalPaidSalary, pendingCommission, totalDeductionAmount, totalAdvances, netSalaryAfterDeductions, dailyRate };
-}
-/* Members whose subscription started in a given YYYY-MM, for a given trainer (or all trainers if null). */
-function getMonthClients(db, trainerId, ym){
-  return db.members.filter(m=> (trainerId?m.trainerId===trainerId:!!m.trainerId) && m.startDate && m.startDate.startsWith(ym) );
-}
-function getTrainerMonthStats(db, trainer, ym){
-  const clients = getMonthClients(db, trainer.id, ym);
-  const subsIncome = clients.reduce((s,m)=>s+(m.paid||0),0);
-  const privateIncome = clients.reduce((s,m)=>s+(m.privatePaid||0),0);
-  const privateSessionsCount = db.privateSessions.filter(ps=>ps.trainerId===trainer.id && ps.startDate && ps.startDate.startsWith(ym)).length;
-  return { count:clients.length, income: subsIncome+privateIncome, subsIncome, privateIncome, privateSessionsCount, clients };
-}
-/* ===== Dashboard helpers ===== */
-function getNewMembersGrowth(db, monthsBack){
-  monthsBack = monthsBack || 6;
-  const now = new Date();
-  const pts = [];
-  let cumulative = db.members.filter(m=>{
-    const created = m.created || m.startDate;
-    if(!created) return false;
-    const d = new Date(now.getFullYear(), now.getMonth()-monthsBack+1, 1);
-    return created < (d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01');
-  }).length;
-  for(let i=monthsBack-1;i>=0;i--){
-    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
-    const ym = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-    const newThisMonth = db.members.filter(m=>(m.created||m.startDate||'').startsWith(ym)).length;
-    cumulative += newThisMonth;
-    pts.push({ name:d.toLocaleDateString(App.lang==='en'?'en-US':'ar-EG-u-nu-latn',{month:'short'}), total:cumulative, added:newThisMonth });
-  }
-  return pts;
-}
-const DONUT_COLORS = ['var(--blue)','var(--cyan)','var(--gold)','var(--purple)','var(--success)'];
-function getPackageDistribution(db){
-  const active = db.members.filter(m=>getMemberStatus(m)!=='expired');
-  const byPkg = {};
-  active.forEach(m=>{
-    const pkg = db.packages.find(p=>p.id===m.packageId);
-    const name = pkg ? pkg.name : 'بدون باقة';
-    byPkg[name] = (byPkg[name]||0)+1;
-  });
-  const entries = Object.entries(byPkg).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  const total = active.length || 1;
-  return entries.map(([name,count],i)=>({ name, count, pct:Math.round(count/total*100), color:DONUT_COLORS[i%DONUT_COLORS.length] }));
-}
-function getRecentOperations(db, limit){
-  return db.transactions.slice().reverse().slice(0, limit||6).map(t=>{
-    let iconName='dollar', bg='rgba(0,102,255,0.12)', color='var(--blue)';
-    if(t.category==='اشتراك جديد'){ iconName='userplus'; bg='rgba(16,185,129,0.12)'; color='var(--success)'; }
-    else if(t.category==='تجديد اشتراك'){ iconName='refresh'; bg='rgba(0,212,255,0.12)'; color='var(--cyan)'; }
-    else if(t.category==='بريفيت' || t.category==='تجديد بريفيت'){ iconName='award'; bg='rgba(139,92,246,0.12)'; color='var(--purple)'; }
-    else if(!t.positive){ iconName='minus'; bg='rgba(244,63,94,0.12)'; color='var(--danger)'; }
-    return { desc:t.desc, category:t.category, date:t.date, amount:t.amount, positive:t.positive, iconName, bg, color };
-  });
-}
-function getTopTrainersPerformance(db, limit){
-  const ym = getTodayStr().slice(0,7);
-  const active = db.trainers.filter(t=>t.status==='active');
-  const withStats = active.map(tr=>{
-    const s = getTrainerMonthStats(db, tr, ym);
-    const allClients = db.members.filter(m=>m.trainerId===tr.id);
-    const attendedThisMonth = allClients.filter(m=> db.attendance.some(a=>a.memberId===m.id && a.type==='in' && a.date && a.date.startsWith(ym)) ).length;
-    const rate = allClients.length ? Math.round(attendedThisMonth/allClients.length*100) : 0;
-    return { trainer:tr, clients:allClients.length, monthClients:s.count, rate };
-  }).sort((a,b)=>b.monthClients-a.monthClients);
-  return withStats.slice(0, limit||3);
-}
-function getAvgDailyAttendance(db, days){
-  days = days || 30;
-  const now = new Date();
-  const cutoff = new Date(now); cutoff.setDate(cutoff.getDate()-days);
-  const cutoffStr = cutoff.toISOString().slice(0,10);
-  const count = db.attendance.filter(a=>a.type==='in' && a.date>=cutoffStr).length;
-  return Math.round(count/days);
-}
-function getAvailableMonths(db){
-  const set = new Set();
-  db.members.forEach(m=>{ if(m.startDate) set.add(m.startDate.slice(0,7)); });
-  db.privateSessions.forEach(s=>{ if(s.startDate) set.add(s.startDate.slice(0,7)); });
-  set.add(getTodayStr().slice(0,7));
-  return Array.from(set).sort().reverse();
-}
-function monthLabel(ym){
-  const [y,m] = ym.split('-').map(Number);
-  const d = new Date(y, m-1, 1);
-  return d.toLocaleDateString(App.lang==='en'?'en-US':'ar-EG-u-nu-latn', {month:'long', year:'numeric'});
-}
+/* ============ SUPABASE CONFIG ============ */
+const SUPABASE_URL = 'https://qlzsvlbxytvwmcnhdwpt.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_E84sYQL9yV8MiaHbuznq8w_mBLUQ5aU';
+let supabaseClient = null;
+try { supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY); } catch(e) { console.warn('Supabase init failed:', e); }
 
-const DEFAULTS = {
-  gym:{ name:'GymPro', phone:'0551234567', address:'الرياض — حي النزهة', hours:'6 صباحاً – 12 منتصف الليل', adminName:'أحمد المالك', currency:'SAR', currencySymbol:'ر.س', phonePrefix:'+966', notifications:{expiry:true,followup:true,dailyReport:false,attendance:true} },
-  settings:{ name:'GymPro', phone:'0551234567', address:'الرياض — حي النزهة', hours:'6 صباحاً – 12 منتصف الليل', adminName:'أحمد المالك', currency:'SAR', currencySymbol:'ر.س', phonePrefix:'+966', notifications:{expiry:true,followup:true,dailyReport:false,attendance:true} },
-  packages:[
-    {id:'pkg1',name:'شهري',price:200,duration:30,active:true},
-    {id:'pkg2',name:'3 أشهر',price:500,duration:90,active:true},
-    {id:'pkg3',name:'6 أشهر',price:900,duration:180,active:true},
-    {id:'pkg4',name:'سنوي',price:1800,duration:365,active:true},
-    {id:'pkg5',name:'طلاب',price:150,duration:30,active:true},
-  ],
-  trainers:[
-    {id:'t1',name:'أحمد ناصر القحطاني',specialty:'لياقة عامة وكمال',phone:'0501112222',salary:3500,commissionPct:15,status:'active',code:'TR001'},
-    {id:'t2',name:'فيصل العمري',specialty:'كمال الأجسام',phone:'0503334444',salary:3000,commissionPct:12,status:'active',code:'TR002'},
-    {id:'t3',name:'عمر الشهري',specialty:'يوغا واسترخاء',phone:'0505556666',salary:2800,commissionPct:10,status:'active',code:'TR003'},
-    {id:'t4',name:'سلمى الدوسري',specialty:'زومبا ورياضة نسائية',phone:'0507778888',salary:2500,commissionPct:8,status:'active',code:'TR004'},
-  ],
-  members:[
-    {id:'m1',code:'GYM-0001',name:'محمد علي السهلي',phone:'0501234567',dob:'1990-05-15',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'',startDate:'2025-06-01',endDate:'2025-07-01',paid:200,remaining:0,payMethod:'نقدي',notes:'',created:'2025-06-01'},
-    {id:'m2',code:'GYM-0002',name:'سارة أحمد الزهراني',phone:'0557891234',dob:'1995-08-20',gender:'أنثى',address:'الرياض',packageId:'pkg2',trainerId:'t1',startDate:'2025-05-15',endDate:'2025-08-15',paid:400,remaining:100,payMethod:'مدى',notes:'',created:'2025-05-15',privatePkgId:'pp2',privatePaid:800,privateRemaining:300},
-    {id:'m3',code:'GYM-0003',name:'خالد محمود العمري',phone:'0551234890',dob:'1988-03-10',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'',startDate:'2025-05-14',endDate:'2025-06-14',paid:200,remaining:0,payMethod:'نقدي',notes:'',created:'2025-05-14'},
-    {id:'m4',code:'GYM-0004',name:'نورة سعيد الشمري',phone:'0509876543',dob:'1992-12-01',gender:'أنثى',address:'الرياض',packageId:'pkg4',trainerId:'t4',startDate:'2025-01-01',endDate:'2026-01-01',paid:1800,remaining:0,payMethod:'تحويل',notes:'',created:'2025-01-01'},
-    {id:'m5',code:'GYM-0005',name:'عبدالله فهد القرني',phone:'0551237890',dob:'1993-07-22',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'',startDate:'2025-06-09',endDate:'2025-07-09',paid:150,remaining:50,payMethod:'نقدي',notes:'',created:'2025-06-09'},
-    {id:'m6',code:'GYM-0006',name:'ريم الغامدي',phone:'0559871234',dob:'1997-04-18',gender:'أنثى',address:'الرياض',packageId:'pkg2',trainerId:'',startDate:'2025-02-20',endDate:'2025-05-20',paid:500,remaining:0,payMethod:'مدى',notes:'',created:'2025-02-20'},
-    {id:'m7',code:'GYM-0007',name:'فهد الحربي',phone:'0551112233',dob:'1985-11-30',gender:'ذكر',address:'الرياض',packageId:'pkg1',trainerId:'t2',startDate:'2025-04-28',endDate:'2025-05-28',paid:200,remaining:0,payMethod:'نقدي',notes:'',created:'2025-04-28'},
-  ],
-  attendance:[
-    {id:'a1',memberId:'m1',memberName:'محمد علي',date:getTodayStr(),time:'06:32',type:'in'},
-    {id:'a2',memberId:'m2',memberName:'سارة أحمد',date:getTodayStr(),time:'07:15',type:'in'},
-    {id:'a3',memberId:'m3',memberName:'خالد محمود',date:getTodayStr(),time:'08:00',type:'out'},
-    {id:'a4',memberId:'m4',memberName:'نورة سعيد',date:getTodayStr(),time:'08:45',type:'in'},
-    {id:'a5',memberId:'m5',memberName:'عبدالله فهد',date:getTodayStr(),time:'09:10',type:'in'},
-  ],
-  transactions:[
-    {id:'tx1',date:getTodayStr(),type:'إيراد',category:'اشتراك',desc:'اشتراك جديد — محمد علي',amount:200,method:'نقدي',positive:true},
-    {id:'tx2',date:getTodayStr(),type:'إيراد',category:'بريفيت',desc:'بريفيت — سارة أحمد',amount:600,method:'مدى',positive:true},
-    {id:'tx3',date:'2025-06-08',type:'مصروف',category:'رواتب',desc:'رواتب المدربين',amount:12800,method:'تحويل',positive:false},
-    {id:'tx4',date:'2025-06-08',type:'إيراد',category:'اشتراك',desc:'تجديد اشتراك — نورة سعيد',amount:1800,method:'تحويل',positive:true},
-    {id:'tx5',date:'2025-06-07',type:'مصروف',category:'فواتير',desc:'فاتورة كهرباء',amount:850,method:'تحويل',positive:false},
-    {id:'tx6',date:'2025-06-06',type:'إيراد',category:'اشتراك',desc:'اشتراك — عبدالله فهد',amount:200,method:'نقدي',positive:true},
-    {id:'tx7',date:'2025-06-05',type:'مصروف',category:'صيانة',desc:'صيانة أجهزة',amount:450,method:'نقدي',positive:false},
-  ],
-  privateSessions:[
-    {id:'ps1',clientId:'m2',clientName:'سارة أحمد',trainerId:'t1',trainerName:'أحمد ناصر',packageName:'8 جلسات',sessionsTotal:8,sessionsDone:3,startDate:'2025-06-01'},
-  ],
-  privatePkgs:[
-    {id:'pp1',name:'4 جلسات',price:600,duration:4,active:true},
-    {id:'pp2',name:'8 جلسات',price:1100,duration:8,active:true},
-    {id:'pp3',name:'12 جلسة',price:1500,duration:12,active:true},
-    {id:'pp4',name:'20 جلسة',price:2400,duration:20,active:true},
-  ],
-  classes:[
-    {id:'cl1',name:'كروسفت',trainerId:'t1',capacity:20,enrolled:14,time:'06:00',days:['السبت','الاثنين','الأربعاء']},
-    {id:'cl2',name:'يوغا',trainerId:'t3',capacity:15,enrolled:9,time:'17:00',days:['الأحد','الثلاثاء','الخميس']},
-    {id:'cl3',name:'زومبا',trainerId:'t4',capacity:25,enrolled:20,time:'19:00',days:['السبت','الاثنين','الأربعاء']},
-  ],
-  schedule:[
-    {id:'sc1',classId:'cl1',day:'السبت',time:'06:00'},
-    {id:'sc2',classId:'cl2',day:'الأحد',time:'17:00'},
-    {id:'sc3',classId:'cl3',day:'السبت',time:'19:00'},
-    {id:'sc4',classId:'cl1',day:'الاثنين',time:'06:00'},
-    {id:'sc5',classId:'cl2',day:'الثلاثاء',time:'17:00'},
-    {id:'sc6',classId:'cl3',day:'الاثنين',time:'19:00'},
-  ],
-  systemUsers:[
-    {id:'su1',username:'admin',password:'1234',role:'owner',name:'أحمد المالك',status:'active',perms:{dashboard:true,members:true,addMember:true,packages:true,trainers:true,private:true,attendance:true,finance:true,reports:true,settings:true}},
-    {id:'su2',username:'reception',password:'1234',role:'reception',name:'سلمى الكاشف',status:'active',perms:{dashboard:true,members:true,addMember:true,packages:false,trainers:false,private:true,attendance:true,finance:false,reports:false,settings:false}},
-    {id:'su3',username:'accountant',password:'1234',role:'accountant',name:'فهد المحاسب',status:'active',perms:{dashboard:true,members:false,addMember:false,packages:false,trainers:false,private:false,attendance:false,finance:true,reports:true,settings:false}},
-  ],
-  pendingUsers:[],
-  trainerAttendance:[],
-  salaryPayments:[],
+/* ============ SYNC STATE ============ */
+const SYNC_STATE = {
+  lastSync: localStorage.getItem('gymproLastSync') || null,
+  isOnline: navigator.onLine,
+  syncInProgress: false,
+  pendingChanges: JSON.parse(localStorage.getItem('gymproPending') || '[]')
 };
 
-function loadDB(){
-  try{
-    const s = localStorage.getItem(DB_KEY);
-    let db = s ? JSON.parse(s) : JSON.parse(JSON.stringify(DEFAULTS));
-    if(!db || typeof db!=='object') db = JSON.parse(JSON.stringify(DEFAULTS));
-    if(!db.gym) db.gym = Object.assign({},DEFAULTS.gym);
-    if(!db.settings) db.settings = Object.assign({},DEFAULTS.settings);
-    if(!db.settings.currency) db.settings.currency='SAR';
-    if(!db.settings.currencySymbol) db.settings.currencySymbol='ر.س';
-    if(!db.settings.phonePrefix) db.settings.phonePrefix='+966';
-    if(!db.settings.notifications) db.settings.notifications=Object.assign({},DEFAULTS.settings.notifications);
-    if(!Array.isArray(db.packages)) db.packages=DEFAULTS.packages.slice();
-    db.packages.forEach(p=>{ if(p.invitations===undefined) p.invitations=0; });
-    if(!Array.isArray(db.trainers)) db.trainers=DEFAULTS.trainers.slice();
-    db.trainers.forEach(tr=>{ if(!tr.shiftStart) tr.shiftStart='09:00'; if(!tr.shiftEnd) tr.shiftEnd='17:00'; if(!tr.dayOff) tr.dayOff='fri'; });
-    if(!Array.isArray(db.members)) db.members=DEFAULTS.members.slice();
-    db.members.forEach(m=>{
-      if(m.invitationsRemaining===undefined){
-        const pkg = db.packages.find(p=>p.id===m.packageId);
-        m.invitationsTotal = pkg ? (pkg.invitations||0) : 0;
-        m.invitationsRemaining = m.invitationsTotal;
-      }
-    });
-    if(!Array.isArray(db.attendance)) db.attendance=DEFAULTS.attendance.slice();
-    if(!Array.isArray(db.transactions)) db.transactions=DEFAULTS.transactions.slice();
-    if(!Array.isArray(db.privateSessions)) db.privateSessions=DEFAULTS.privateSessions.slice();
-    db.privateSessions.forEach(s=>{
-      if(!Array.isArray(s.sessionLog)){
-        s.sessionLog = [];
-        for(let i=0;i<(s.sessionsDone||0);i++) s.sessionLog.push({date:s.startDate||getTodayStr(), loggedBy:'—'});
-      }
-      if(!s.status) s.status = (s.sessionLog.length>=s.sessionsTotal) ? 'completed' : 'active';
-    });
-    if(!Array.isArray(db.privatePkgs)) db.privatePkgs=DEFAULTS.privatePkgs.slice();
-    db.members.forEach(m=>{
-      if(m.privatePkgId && !db.privateSessions.some(s=>s.clientId===m.id)){
-        const pkg = db.privatePkgs.find(p=>p.id===m.privatePkgId);
-        const trainer = db.trainers.find(t=>t.id===m.trainerId);
-        db.privateSessions.push({ id:genId('ps'), clientId:m.id, clientName:m.name,
-          trainerId:m.trainerId||'', trainerName:trainer?trainer.name:'', packageName:pkg?pkg.name:'بريفيت',
-          sessionsTotal:pkg?pkg.duration:8, sessionsDone:0, sessionLog:[], status:'active', startDate:m.startDate||getTodayStr() });
-      }
-    });
-    if(!Array.isArray(db.classes)) db.classes=DEFAULTS.classes.slice();
-    if(!Array.isArray(db.schedule)) db.schedule=DEFAULTS.schedule.slice();
-    if(!Array.isArray(db.systemUsers)) db.systemUsers=DEFAULTS.systemUsers.slice();
-    if(!Array.isArray(db.pendingUsers)) db.pendingUsers=[];
-    if(!Array.isArray(db.trainerAttendance)) db.trainerAttendance=[];
-    if(!Array.isArray(db.salaryPayments)) db.salaryPayments=[];
-    db.members.forEach((m,i)=>{ if(!m.code) m.code='GYM-'+String(i+1).padStart(4,'0'); if(m.remaining===undefined) m.remaining=0; });
-    db.trainers.forEach((t,i)=>{ if(!t.code) t.code='TR'+String(i+1).padStart(3,'0'); });
-    return db;
-  }catch(e){
-    console.warn('loadDB error, resetting to defaults', e);
-    return JSON.parse(JSON.stringify(DEFAULTS));
+function updateSyncStatus(status, message) {
+  const el = document.getElementById('syncStatus');
+  if (el) {
+    el.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${status==='error'?'var(--danger)':status==='syncing'?'var(--warning)':status==='online'?'var(--success)':'var(--text-muted)'};display:inline-block;margin-left:4px;"></span> ${message}`;
   }
 }
-function saveDB(db){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
-/* ============ APP STATE ============ */
+window.addEventListener('online', () => { SYNC_STATE.isOnline = true; updateSyncStatus('online', 'متصل — جاري المزامنة...'); syncPendingChanges(); });
+window.addEventListener('offline', () => { SYNC_STATE.isOnline = false; updateSyncStatus('offline', 'غير متصل — العمل offline'); });
+
+/* ============ TABLE MAPPING ============ */
+const TABLE_MAP = {
+  members: 'members', trainers: 'trainers', packages: 'packages',
+  privatePkgs: 'private_pkgs', transactions: 'transactions',
+  attendance: 'attendance', trainerAttendance: 'trainer_attendance',
+  privateSessions: 'private_sessions', systemUsers: 'users',
+  salaryPayments: 'salary_payments', classes: 'classes',
+  schedule: 'schedules', settings: 'settings'
+};
+
+const COL_MAP = {
+  id:'id', code:'code', name:'name', phone:'phone', dob:'dob', gender:'gender',
+  address:'address', packageId:'package_id', trainerId:'trainer_id',
+  startDate:'start_date', endDate:'end_date', paid:'paid', remaining:'remaining',
+  payMethod:'pay_method', notes:'notes', privatePkgId:'private_pkg_id',
+  privatePaid:'private_paid', privateRemaining:'private_remaining',
+  invitationsTotal:'invitations_total', invitationsRemaining:'invitations_remaining',
+  created:'created_at', updatedAt:'updated_at',
+  specialty:'specialty', salary:'salary', commissionPct:'commission_pct',
+  shiftStart:'shift_start', shiftEnd:'shift_end', dayOff:'day_off', status:'status',
+  price:'price', duration:'duration', invitations:'invitations', active:'active',
+  type:'type', category:'category', desc:'description', amount:'amount',
+  method:'method', positive:'positive', trainerName:'trainer_name',
+  memberId:'member_id', memberName:'member_name', time:'time',
+  checkIn:'check_in', checkOut:'check_out', hours:'hours',
+  lateMinutes:'late_minutes', earlyMinutes:'early_minutes',
+  deductionFraction:'deduction_fraction', deductionLabel:'deduction_label',
+  checkInApproved:'check_in_approved', checkInApprovedBy:'check_in_approved_by',
+  checkOutApproved:'check_out_approved', checkOutApprovedBy:'check_out_approved_by',
+  clientId:'client_id', clientName:'client_name', packageName:'package_name',
+  sessionsTotal:'sessions_total', sessionsDone:'sessions_done', sessionLog:'session_log',
+  username:'username', password:'password', role:'role', perms:'perms',
+  period:'period', salaryAmount:'salary_amount', commissionAmount:'commission_amount',
+  paidDate:'paid_date', capacity:'capacity', enrolled:'enrolled', days:'days',
+  classId:'class_id', gymName:'gym_name', adminName:'admin_name',
+  currency:'currency', currencySymbol:'currency_symbol', phonePrefix:'phone_prefix',
+  logoUrl:'logo_url', notifications:'notifications'
+};
+
+const REV_COL_MAP = {};
+for (const [k, v] of Object.entries(COL_MAP)) REV_COL_MAP[v] = k;
+
+function toSB(table, obj) { const r = {}; for (const [k, v] of Object.entries(obj)) { r[COL_MAP[k] || k] = v; } return r; }
+function fromSB(table, obj) { const r = {}; for (const [k, v] of Object.entries(obj)) { r[REV_COL_MAP[k] || k] = v; } return r; }
+
+/* ============ SUPABASE CRUD ============ */
+async function sbInsert(table, data) {
+  if (!supabaseClient || !SYNC_STATE.isOnline) return { offline: true };
+  try { const { data: r, error } = await supabaseClient.from(TABLE_MAP[table] || table).insert(toSB(table, data)).select(); if (error) throw error; return { data: r, error: null }; }
+  catch (e) { console.error('SB insert error:', e); return { error: e, offline: true }; }
+}
+async function sbUpdate(table, data, id) {
+  if (!supabaseClient || !SYNC_STATE.isOnline) return { offline: true };
+  try { const { data: r, error } = await supabaseClient.from(TABLE_MAP[table] || table).update(toSB(table, data)).eq('id', id).select(); if (error) throw error; return { data: r, error: null }; }
+  catch (e) { console.error('SB update error:', e); return { error: e, offline: true }; }
+}
+async function sbDelete(table, id) {
+  if (!supabaseClient || !SYNC_STATE.isOnline) return { offline: true };
+  try { const { error } = await supabaseClient.from(TABLE_MAP[table] || table).delete().eq('id', id); if (error) throw error; return { error: null }; }
+  catch (e) { console.error('SB delete error:', e); return { error: e, offline: true }; }
+}
+
+/* ============ SYNC ============ */
+function queueChange(table, data, op) {
+  SYNC_STATE.pendingChanges.push({ table, data: JSON.parse(JSON.stringify(data)), op, ts: Date.now() });
+  localStorage.setItem('gymproPending', JSON.stringify(SYNC_STATE.pendingChanges));
+}
+
+async function syncPending() {
+  if (SYNC_STATE.syncInProgress || !SYNC_STATE.isOnline || !supabaseClient) return;
+  SYNC_STATE.syncInProgress = true;
+  updateSyncStatus('syncing', 'جاري المزامنة...');
+  const pending = [...SYNC_STATE.pendingChanges];
+  const done = [];
+  for (const ch of pending) {
+    try {
+      let r;
+      if (ch.op === 'insert') r = await sbInsert(ch.table, ch.data);
+      else if (ch.op === 'update') r = await sbUpdate(ch.table, ch.data, ch.data.id);
+      else if (ch.op === 'delete') r = await sbDelete(ch.table, ch.data.id);
+      if (!r.error && !r.offline) done.push(ch);
+    } catch (e) { console.error('Sync fail:', ch, e); }
+  }
+  SYNC_STATE.pendingChanges = pending.filter(p => !done.includes(p));
+  localStorage.setItem('gymproPending', JSON.stringify(SYNC_STATE.pendingChanges));
+  SYNC_STATE.syncInProgress = false;
+  updateSyncStatus('online', 'متزامن ✓');
+}
+
+/* ============ LOAD / SAVE ============ */
+const DB_KEY = 'gymproDb_merged_v1';
+const CACHE_KEY = 'gymproCache';
+const BACKUP_KEY = 'gymproBackup';
+
+async function loadDB(force) {
+  if (SYNC_STATE.isOnline && supabaseClient && !force) {
+    try {
+      const db = {};
+      for (const [camel, snake] of Object.entries(TABLE_MAP)) {
+        const { data, error } = await supabaseClient.from(snake).select('*');
+        if (!error && data) db[camel] = data.map(r => fromSB(snake, r));
+      }
+      if (db.settings && db.settings.length) { db.gym = Object.assign({}, db.settings[0]); db.settings = db.settings[0]; }
+      db.pendingUsers = [];
+      SYNC_STATE.lastSync = new Date().toISOString();
+      localStorage.setItem('gymproLastSync', SYNC_STATE.lastSync);
+      localStorage.setItem(CACHE_KEY, JSON.stringify(db));
+      updateSyncStatus('online', 'متزامن ✓');
+      return normalizeDB(db);
+    } catch (e) { console.warn('SB load fail, using cache:', e); }
+  }
+  const cached = localStorage.getItem(CACHE_KEY);
+  if (cached) try { return normalizeDB(JSON.parse(cached)); } catch (e) {}
+  const old = localStorage.getItem(DB_KEY);
+  if (old) try { return normalizeDB(JSON.parse(old)); } catch (e) {}
+  return normalizeDB(JSON.parse(JSON.stringify(DEFAULTS)));
+}
+
+function normalizeDB(db) {
+  if(!db||typeof db!=='object') db=JSON.parse(JSON.stringify(DEFAULTS));
+  if(!db.gym) db.gym=Object.assign({},DEFAULTS.gym);
+  if(!db.settings) db.settings=Object.assign({},DEFAULTS.settings);
+  if(!db.settings.currency) db.settings.currency='SAR';
+  if(!db.settings.currencySymbol) db.settings.currencySymbol='ر.س';
+  if(!db.settings.phonePrefix) db.settings.phonePrefix='+966';
+  if(!db.settings.notifications) db.settings.notifications=Object.assign({},DEFAULTS.settings.notifications);
+  if(!Array.isArray(db.packages)) db.packages=DEFAULTS.packages.slice();
+  db.packages.forEach(p=>{ if(p.invitations===undefined) p.invitations=0; });
+  if(!Array.isArray(db.trainers)) db.trainers=DEFAULTS.trainers.slice();
+  db.trainers.forEach(tr=>{ if(!tr.shiftStart) tr.shiftStart='09:00'; if(!tr.shiftEnd) tr.shiftEnd='17:00'; if(!tr.dayOff) tr.dayOff='fri'; });
+  if(!Array.isArray(db.members)) db.members=DEFAULTS.members.slice();
+  db.members.forEach(m=>{
+    if(m.invitationsRemaining===undefined){ const pkg=db.packages.find(p=>p.id===m.packageId); m.invitationsTotal=pkg?(pkg.invitations||0):0; m.invitationsRemaining=m.invitationsTotal; }
+  });
+  if(!Array.isArray(db.attendance)) db.attendance=DEFAULTS.attendance.slice();
+  if(!Array.isArray(db.transactions)) db.transactions=DEFAULTS.transactions.slice();
+  if(!Array.isArray(db.privateSessions)) db.privateSessions=DEFAULTS.privateSessions.slice();
+  db.privateSessions.forEach(s=>{
+    if(!Array.isArray(s.sessionLog)){ s.sessionLog=[]; for(let i=0;i<(s.sessionsDone||0);i++) s.sessionLog.push({date:s.startDate||getTodayStr(), loggedBy:'—'}); }
+    if(!s.status) s.status=(s.sessionLog.length>=s.sessionsTotal)?'completed':'active';
+  });
+  if(!Array.isArray(db.privatePkgs)) db.privatePkgs=DEFAULTS.privatePkgs.slice();
+  db.members.forEach(m=>{
+    if(m.privatePkgId && !db.privateSessions.some(s=>s.clientId===m.id)){
+      const pkg=db.privatePkgs.find(p=>p.id===m.privatePkgId);
+      const trainer=db.trainers.find(t=>t.id===m.trainerId);
+      db.privateSessions.push({id:genId('ps'), clientId:m.id, clientName:m.name, trainerId:m.trainerId||'', trainerName:trainer?trainer.name:'', packageName:pkg?pkg.name:'بريفيت', sessionsTotal:pkg?pkg.duration:8, sessionsDone:0, sessionLog:[], status:'active', startDate:m.startDate||getTodayStr()});
+    }
+  });
+  if(!Array.isArray(db.classes)) db.classes=DEFAULTS.classes.slice();
+  if(!Array.isArray(db.schedule)) db.schedule=DEFAULTS.schedule.slice();
+  if(!Array.isArray(db.systemUsers)) db.systemUsers=DEFAULTS.systemUsers.slice();
+  if(!Array.isArray(db.pendingUsers)) db.pendingUsers=[];
+  if(!Array.isArray(db.trainerAttendance)) db.trainerAttendance=[];
+  if(!Array.isArray(db.salaryPayments)) db.salaryPayments=[];
+  db.members.forEach((m,i)=>{ if(!m.code) m.code='GYM-'+String(i+1).padStart(4,'0'); if(m.remaining===undefined) m.remaining=0; });
+  db.trainers.forEach((t,i)=>{ if(!t.code) t.code='TR'+String(i+1).padStart(3,'0'); });
+  return db;
+}
+
+function saveDB(db) { localStorage.setItem(CACHE_KEY, JSON.stringify(db)); localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+/* ============ AUTO BACKUP ============ */
+function autoExport() {
+  const db = App.db;
+  const backup = { timestamp: new Date().toISOString(), data: db };
+  localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `gympro_backup_${getTodayStr()}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  return backup;
+}
+function importBackup(content) {
+  try { const b = JSON.parse(content); if (b.data) { App.db = b.data; saveDB(App.db); return { success: true }; } }
+  catch (e) { return { success: false, error: e.message }; }
+}
+function scheduleAutoExport() {
+  const now = new Date(), tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(2, 0, 0, 0);
+  setTimeout(() => { autoExport(); scheduleAutoExport(); }, tomorrow - now);
+}
+
 const App = {
   db: loadDB(),
   currentPage: 'dashboard',
@@ -828,7 +649,10 @@ const App = {
   reportsTab: 'members',
   settingsTab: 'general',
 
-  persist(){ saveDB(this.db); },
+  persist(){
+    saveDB(this.db);
+    if (SYNC_STATE.isOnline && supabaseClient) syncPending();
+  },
 
   setLang(lang){
     this.lang = lang;
@@ -885,28 +709,37 @@ const App = {
     const invitationsTotal = pkg ? (pkg.invitations||0) : 0;
     const newMember = Object.assign({}, m, {id:genId('m'), code, created:getTodayStr(), invitationsTotal, invitationsRemaining:invitationsTotal});
     this.db.members.push(newMember);
+    queueChange('members', newMember, 'insert');
     if(m.paid>0){
-      this.db.transactions.push({id:genId('tx'), date:getTodayStr(), type:'إيراد', category:'اشتراك جديد', desc:'اشتراك جديد — '+m.name, amount:m.paid, method:m.payMethod||'نقدي', positive:true});
+      const tx = {id:genId('tx'), date:getTodayStr(), type:'إيراد', category:'اشتراك جديد', desc:'اشتراك جديد — '+m.name, amount:m.paid, method:m.payMethod||'نقدي', positive:true};
+      this.db.transactions.push(tx);
+      queueChange('transactions', tx, 'insert');
     }
     if(m.privatePkgId){
       const privatePkg = this.db.privatePkgs.find(p=>p.id===m.privatePkgId);
       if(privatePkg){
         const trainer = this.db.trainers.find(t=>t.id===newMember.trainerId);
-        this.db.privateSessions.push({ id:genId('ps'), clientId:newMember.id, clientName:newMember.name,
+        const ps = { id:genId('ps'), clientId:newMember.id, clientName:newMember.name,
           trainerId:newMember.trainerId||'', trainerName:trainer?trainer.name:'', packageName:privatePkg.name,
-          sessionsTotal:privatePkg.duration, sessionsDone:0, sessionLog:[], status:'active', startDate:newMember.startDate||getTodayStr() });
+          sessionsTotal:privatePkg.duration, sessionsDone:0, sessionLog:[], status:'active', startDate:newMember.startDate||getTodayStr() };
+        this.db.privateSessions.push(ps);
+        queueChange('privateSessions', ps, 'insert');
       }
       if(m.privatePaid>0){
-        this.db.transactions.push({id:genId('tx'), date:getTodayStr(), type:'إيراد', category:'بريفيت', desc:'اشتراك بريفيت — '+m.name, amount:m.privatePaid, method:m.payMethod||'نقدي', positive:true});
+        const tx = {id:genId('tx'), date:getTodayStr(), type:'إيراد', category:'بريفيت', desc:'اشتراك بريفيت — '+m.name, amount:m.privatePaid, method:m.payMethod||'نقدي', positive:true};
+        this.db.transactions.push(tx);
+        queueChange('transactions', tx, 'insert');
       }
     }
     this.persist(); this.showToast('تم إضافة العضو بنجاح');
+    syncPending();
     return newMember;
   },
   updateMember(id, data){
     const i = this.db.members.findIndex(m=>m.id===id);
-    if(i>-1) this.db.members[i] = Object.assign({}, this.db.members[i], data);
+    if(i>-1){ this.db.members[i] = Object.assign({}, this.db.members[i], data); queueChange('members', this.db.members[i], 'update'); }
     this.persist(); this.showToast('تم تحديث بيانات العضو');
+    syncPending();
   },
   deleteMember(id){
     this.db.members = this.db.members.filter(m=>m.id!==id);
@@ -944,22 +777,24 @@ const App = {
     this.persist(); this.showToast('تم تحديث بيانات المدرب');
   },
   deleteTrainer(id){
+    queueChange('trainers', {id:id}, 'delete');
     this.db.trainers = this.db.trainers.filter(t=>t.id!==id);
     this.persist(); this.showToast('تم حذف المدرب');
+    syncPending();
   },
 
   /* --- Packages --- */
   addPackage(p){ this.db.packages.push(Object.assign({},p,{id:genId('pkg')})); this.persist(); this.showToast('تم إضافة الباقة'); },
   updatePackage(id,data){ const i=this.db.packages.findIndex(p=>p.id===id); if(i>-1) this.db.packages[i]=Object.assign({},this.db.packages[i],data); this.persist(); this.showToast('تم تحديث الباقة'); },
-  deletePackage(id){ this.db.packages=this.db.packages.filter(p=>p.id!==id); this.persist(); this.showToast('تم حذف الباقة'); },
+  deletePackage(id){ queueChange('packages', {id:id}, 'delete'); this.db.packages=this.db.packages.filter(p=>p.id!==id); this.persist(); this.showToast('تم حذف الباقة'); syncPending(); },
 
   /* --- Transactions --- */
   addTransaction(tx){ this.db.transactions.push(Object.assign({},tx,{id:genId('tx')})); this.persist(); this.showToast('تم إضافة المعاملة'); },
   updateTransaction(id, data){ const i=this.db.transactions.findIndex(t=>t.id===id); if(i>-1) this.db.transactions[i]=Object.assign({}, this.db.transactions[i], data); this.persist(); this.showToast('تم تحديث المعاملة'); },
-  deleteTransaction(id){ this.db.transactions=this.db.transactions.filter(t=>t.id!==id); this.persist(); this.showToast('تم حذف المعاملة'); },
+  deleteTransaction(id){ queueChange('transactions', {id:id}, 'delete'); this.db.transactions=this.db.transactions.filter(t=>t.id!==id); this.persist(); this.showToast('تم حذف المعاملة'); syncPending(); },
 
   /* --- Attendance --- */
-  addAttendance(rec){ this.db.attendance.push(Object.assign({},rec,{id:genId('a')})); this.persist(); this.showToast('تم تسجيل الحضور'); },
+  addAttendance(rec){ const ar=Object.assign({},rec,{id:genId('a')}); this.db.attendance.push(ar); queueChange('attendance', ar, 'insert'); this.persist(); this.showToast('تم تسجيل الحضور'); syncPending(); },
   /* Check a member in by their code — once per day only. Returns {status:'success'|'duplicate'|'notfound', member} */
   checkInByCode(code){
     code = (code||'').trim();
@@ -1060,7 +895,7 @@ const App = {
   /* --- Private sessions --- */
   addPrivateSession(s){ this.db.privateSessions.push(Object.assign({},s,{id:genId('ps'), sessionLog:[], status:'active'})); this.persist(); this.showToast('تم إضافة جلسة البريفيت'); },
   updatePrivateSession(id,data){ const i=this.db.privateSessions.findIndex(s=>s.id===id); if(i>-1) this.db.privateSessions[i]=Object.assign({},this.db.privateSessions[i],data); this.persist(); this.showToast('تم تحديث الجلسة'); },
-  deletePrivateSession(id){ this.db.privateSessions=this.db.privateSessions.filter(s=>s.id!==id); this.persist(); this.showToast('تم حذف الجلسة'); },
+  deletePrivateSession(id){ queueChange('privateSessions', {id:id}, 'delete'); this.db.privateSessions=this.db.privateSessions.filter(s=>s.id!==id); this.persist(); this.showToast('تم حذف الجلسة'); syncPending(); },
   /* Tick off one attended day for a private-training package; auto-completes when the day count is reached. */
   logPrivateSessionDay(sessionId){
     const s = this.db.privateSessions.find(x=>x.id===sessionId);
@@ -1083,20 +918,20 @@ const App = {
   },
 
   /* --- Settings --- */
-  updateSettings(s){ this.db.settings=Object.assign({},this.db.settings,s); this.db.gym=Object.assign({},this.db.gym,s); this.persist(); this.showToast('تم تحديث الإعدادات'); },
+  updateSettings(s){ this.db.settings=Object.assign({},this.db.settings,s); this.db.gym=Object.assign({},this.db.gym,s); queueChange('settings', this.db.settings, 'update'); this.persist(); this.showToast('تم تحديث الإعدادات'); syncPending(); },
 
   /* --- Users --- */
   addUser(u){ this.db.systemUsers.push(Object.assign({},u,{id:genId('su')})); this.persist(); this.showToast('تم إضافة المستخدم'); },
   updateUser(id,data){ const i=this.db.systemUsers.findIndex(u=>u.id===id); if(i>-1) this.db.systemUsers[i]=Object.assign({},this.db.systemUsers[i],data); this.persist(); this.showToast('تم تحديث المستخدم'); },
-  deleteUser(id){ this.db.systemUsers=this.db.systemUsers.filter(u=>u.id!==id); this.persist(); this.showToast('تم حذف المستخدم'); },
+  deleteUser(id){ queueChange('systemUsers', {id:id}, 'delete'); this.db.systemUsers=this.db.systemUsers.filter(u=>u.id!==id); this.persist(); this.showToast('تم حذف المستخدم'); syncPending(); },
 
   /* --- Classes / Schedule --- */
   addClass(c){ this.db.classes.push(Object.assign({},c,{id:genId('cl')})); this.persist(); this.showToast('تم إضافة الفصل'); },
   updateClass(id,data){ const i=this.db.classes.findIndex(c=>c.id===id); if(i>-1) this.db.classes[i]=Object.assign({},this.db.classes[i],data); this.persist(); this.showToast('تم تحديث الفصل'); },
-  deleteClass(id){ this.db.classes=this.db.classes.filter(c=>c.id!==id); this.db.schedule=this.db.schedule.filter(s=>s.classId!==id); this.persist(); this.showToast('تم حذف الفصل'); },
+  deleteClass(id){ queueChange('classes', {id:id}, 'delete'); this.db.classes=this.db.classes.filter(c=>c.id!==id); this.db.schedule=this.db.schedule.filter(s=>s.classId!==id); this.persist(); this.showToast('تم حذف الفصل'); syncPending(); },
 
   /* --- Salary payments --- */
-  paySalary(p){ this.db.salaryPayments.push(Object.assign({},p,{id:genId('sp')})); this.persist(); this.showToast('تم تسجيل الدفعة'); },
+  paySalary(p){ const sp=Object.assign({},p,{id:genId('sp')}); this.db.salaryPayments.push(sp); queueChange('salaryPayments', sp, 'insert'); this.persist(); this.showToast('تم تسجيل الدفعة'); syncPending(); },
 };
 window.App = App;
 
@@ -3635,6 +3470,15 @@ function bindSettingsTabEvents(tab){
   const db = App.db;
   if(tab==='general'){
     const btn = document.getElementById('stSaveGeneral');
+    const autoBtn = document.getElementById('autoExportBtn');
+    if(autoBtn){
+      autoBtn.addEventListener('click', ()=>{
+        autoExport();
+        this.showToast('تم تصدير النسخة الاحتياطية');
+        const ls = document.getElementById('lastSyncTime');
+        if(ls) ls.textContent = 'آخر مزامنة: ' + new Date().toLocaleString('ar-EG');
+      });
+    }
     if(btn) btn.addEventListener('click', ()=>{
       App.updateSettings({ name:document.getElementById('stName').value, adminName:document.getElementById('stAdmin').value, phone:document.getElementById('stPhone').value, address:document.getElementById('stAddress').value, hours:document.getElementById('stHours').value, currencySymbol:document.getElementById('stCurrency').value, phonePrefix:document.getElementById('stCountryCode').value });
       refreshPage();
