@@ -776,7 +776,7 @@ const TABLE_MAP = {
   attendance: 'attendance', trainerAttendance: 'trainer_attendance',
   privateSessions: 'private_sessions', systemUsers: 'users',
   salaryPayments: 'salary_payments', classes: 'classes',
-  schedule: 'schedules', settings: 'settings'
+  schedule: 'schedules', settings: 'settings', pendingUsers: 'pending_users'
 };
 
 const COL_MAP = {
@@ -805,7 +805,8 @@ const COL_MAP = {
   paidDate:'paid_date', capacity:'capacity', enrolled:'enrolled', days:'days',
   classId:'class_id', gymName:'gym_name', adminName:'admin_name',
   currency:'currency', currencySymbol:'currency_symbol', phonePrefix:'phone_prefix',
-  logoUrl:'logo_url', notifications:'notifications'
+  logoUrl:'logo_url', notifications:'notifications',
+  email:'email', requestedAt:'requested_at', verifiedAt:'verified_at'
 };
 
 const REV_COL_MAP = {};
@@ -920,7 +921,7 @@ function normalizeDB(db) {
   });
   if(!Array.isArray(db.classes)) db.classes=DEFAULTS.classes.slice();
   if(!Array.isArray(db.schedule)) db.schedule=DEFAULTS.schedule.slice();
-  if(!Array.isArray(db.systemUsers)) db.systemUsers=DEFAULTS.systemUsers.slice();
+  if(!Array.isArray(db.systemUsers) || db.systemUsers.length===0) db.systemUsers=DEFAULTS.systemUsers.slice();
   if(!Array.isArray(db.pendingUsers)) db.pendingUsers=[];
   if(!Array.isArray(db.trainerAttendance)) db.trainerAttendance=[];
   if(!Array.isArray(db.salaryPayments)) db.salaryPayments=[];
@@ -1515,6 +1516,30 @@ const App = {
 
   /* --- Users --- */
   addUser(u){ const nu=Object.assign({},u,{id:genId('su')}); this.db.systemUsers.push(nu); queueChange('systemUsers', nu, 'insert'); this.persist(); this.showToast('تم إضافة المستخدم'); syncPending(); },
+  /* Called after email OTP verification succeeds — creates a pending signup request awaiting admin approval. */
+  addPendingUser(u){
+    const nu = Object.assign({}, u, {id:genId('pu'), status:'pending', requestedAt:new Date().toISOString()});
+    this.db.pendingUsers.push(nu);
+    queueChange('pendingUsers', nu, 'insert');
+    this.persist(); syncPending();
+    return nu;
+  },
+  approvePendingUser(pendingId, role, perms){
+    const idx = this.db.pendingUsers.findIndex(p=>p.id===pendingId);
+    if(idx<0) return;
+    const pu = this.db.pendingUsers[idx];
+    this.addUser({ name:pu.name, username:pu.username, password:pu.password, role:role||'reception', status:'active', perms:perms||{} });
+    this.db.pendingUsers.splice(idx,1);
+    queueChange('pendingUsers', {id:pu.id}, 'delete');
+    this.persist(); syncPending();
+    this.showToast('تم اعتماد الحساب بنجاح');
+  },
+  rejectPendingUser(pendingId){
+    this.db.pendingUsers = this.db.pendingUsers.filter(p=>p.id!==pendingId);
+    queueChange('pendingUsers', {id:pendingId}, 'delete');
+    this.persist(); syncPending();
+    this.showToast('تم رفض الطلب');
+  },
   updateUser(id,data){ const i=this.db.systemUsers.findIndex(u=>u.id===id); if(i>-1){ this.db.systemUsers[i]=Object.assign({},this.db.systemUsers[i],data); queueChange('systemUsers', this.db.systemUsers[i], 'update'); } this.persist(); this.showToast('تم تحديث المستخدم'); syncPending(); },
   deleteUser(id){ queueChange('systemUsers', {id:id}, 'delete'); this.db.systemUsers=this.db.systemUsers.filter(u=>u.id!==id); this.persist(); this.showToast('تم حذف المستخدم'); syncPending(); },
 
@@ -1550,34 +1575,45 @@ function render(){
 }
 
 /* ============ LOGIN SCREEN ============ */
-function renderLogin(){
+let authView = 'login';
+let signupTemp = null;
+function loginParticles(n){
   let particles = '';
-  for(let i=0;i<18;i++){
+  for(let i=0;i<n;i++){
     const left = Math.round(Math.random()*100);
     const top = Math.round(Math.random()*100);
     const dur = (6+Math.random()*6).toFixed(1);
     const delay = (Math.random()*4).toFixed(1);
     particles += `<div class="login-particle" style="left:${left}%; top:${top}%; --dur:${dur}s; --delay:${delay}s;"></div>`;
   }
+  return particles;
+}
+function loginHeader(){
+  return `<div style="text-align:center;">
+    <div class="login-logo">${App.db.gym.logoUrl?`<img src="${App.db.gym.logoUrl}" alt="logo" style="width:100%; height:100%; object-fit:cover; border-radius:inherit;" />`:icon('dumbbell',30)}</div>
+    <h1 class="font-display" style="font-size:22px; font-weight:900; color:#fff;">${esc(App.db.gym.name)}</h1>
+    <p style="font-size:13.5px; color:var(--text-tertiary); margin-top:4px;">نظام إدارة الصالة الرياضية</p>
+  </div>`;
+}
+function renderLogin(){
+  if(authView==='signup-details') return renderSignupDetails();
+  if(authView==='signup-verify') return renderSignupVerify();
+  if(authView==='signup-pending') return renderSignupPending();
   return `
   <div class="login-wrap">
-    ${particles}
+    ${loginParticles(18)}
     <div class="login-card">
-      <div style="text-align:center;">
-        <div class="login-logo">${App.db.gym.logoUrl?`<img src="${App.db.gym.logoUrl}" alt="logo" style="width:100%; height:100%; object-fit:cover; border-radius:inherit;" />`:icon('dumbbell',30)}</div>
-        <h1 class="font-display" style="font-size:22px; font-weight:900; color:#fff;">${esc(App.db.gym.name)}</h1>
-        <p style="font-size:13.5px; color:var(--text-tertiary); margin-top:4px;">نظام إدارة الصالة الرياضية</p>
-      </div>
+      ${loginHeader()}
       <form id="loginForm" style="margin-top:28px; display:flex; flex-direction:column; gap:14px;">
         <div>
-          <label class="f-label">اسم المستخدم</label>
+          <label class="f-label">Username</label>
           <div style="position:relative;">
-            <input class="f-input" id="loginUser" style="padding-right:38px;" placeholder="admin" autocomplete="username" />
+            <input class="f-input" id="loginUser" style="padding-right:38px;" autocomplete="username" />
             <span style="position:absolute; right:12px; top:50%; transform:translateY(-50%); color:var(--text-tertiary);">${icon('user',16)}</span>
           </div>
         </div>
         <div>
-          <label class="f-label">كلمة المرور</label>
+          <label class="f-label">Password</label>
           <div style="position:relative;">
             <input class="f-input" type="password" id="loginPass" style="padding-right:38px;" placeholder="••••••" autocomplete="current-password" />
             <span style="position:absolute; right:12px; top:50%; transform:translateY(-50%); color:var(--text-tertiary);">${icon('lock',16)}</span>
@@ -1586,11 +1622,74 @@ function renderLogin(){
         <div id="loginError" style="display:none; color:var(--danger); font-size:13.5px; font-weight:700; text-align:center;"></div>
         <button type="submit" class="btn btn-primary" style="justify-content:center; margin-top:6px;">${icon('logout',16)} تسجيل الدخول</button>
       </form>
-      <p style="text-align:center; font-size:12.5px; color:var(--text-muted); margin-top:20px;">تجربة: admin / 1234</p>
+      <p style="text-align:center; font-size:13px; color:var(--text-tertiary); margin-top:20px;">
+        ${esc(t('noAccount_','مفيش حساب؟'))} <a href="#" id="goSignupBtn" style="color:var(--cyan); font-weight:700; text-decoration:none;">${esc(t('createAccount_','إنشاء حساب جديد'))}</a>
+      </p>
+    </div>
+  </div>`;
+}
+function renderSignupDetails(){
+  return `
+  <div class="login-wrap">
+    ${loginParticles(18)}
+    <div class="login-card">
+      ${loginHeader()}
+      <form id="signupForm" style="margin-top:24px; display:flex; flex-direction:column; gap:12px;">
+        <div><label class="f-label">${esc(t('name','الاسم'))}</label><input class="f-input" id="suName" required /></div>
+        <div><label class="f-label">${esc(t('email_','البريد الإلكتروني'))}</label><input type="email" class="f-input" id="suEmail" dir="ltr" required /></div>
+        <div><label class="f-label">Username</label><input class="f-input" id="suUsername" dir="ltr" required /></div>
+        <div><label class="f-label">Password</label><input type="password" class="f-input" id="suPassword" required /></div>
+        <div><label class="f-label">${esc(t('confirmPassword_','تأكيد كلمة المرور'))}</label><input type="password" class="f-input" id="suPassword2" required /></div>
+        <div id="signupError" style="display:none; color:var(--danger); font-size:13.5px; font-weight:700; text-align:center;"></div>
+        <button type="submit" class="btn btn-primary" id="suSubmitBtn" style="justify-content:center; margin-top:6px;">${icon('bell',16)} ${esc(t('sendCode_','إرسال رمز التحقق'))}</button>
+      </form>
+      <p style="text-align:center; font-size:13px; color:var(--text-tertiary); margin-top:18px;"><a href="#" id="backToLoginBtn" style="color:var(--text-secondary); text-decoration:none;">${icon('chevdown',10)} ${esc(t('backToLogin_','رجوع لتسجيل الدخول'))}</a></p>
+    </div>
+  </div>`;
+}
+function renderSignupVerify(){
+  return `
+  <div class="login-wrap">
+    ${loginParticles(18)}
+    <div class="login-card">
+      ${loginHeader()}
+      <div style="text-align:center; margin-top:20px;">
+        <div style="width:52px; height:52px; border-radius:14px; background:var(--blue-light); color:var(--blue); display:flex; align-items:center; justify-content:center; margin:0 auto 14px;">${icon('bell',24)}</div>
+        <p style="font-size:13.5px; color:var(--text-secondary);">${esc(t('codeSentTo_','تم إرسال رمز تحقق مكوّن من 6 أرقام إلى'))}</p>
+        <p style="font-weight:800; color:#fff; direction:ltr;">${esc(signupTemp?signupTemp.email:'')}</p>
+      </div>
+      <form id="verifyForm" style="margin-top:20px; display:flex; flex-direction:column; gap:12px;">
+        <input class="f-input" id="verifyCode" maxlength="6" inputmode="numeric" placeholder="000000" style="text-align:center; letter-spacing:8px; font-size:22px; font-family:var(--font-display); direction:ltr;" />
+        <div id="verifyError" style="display:none; color:var(--danger); font-size:13.5px; font-weight:700; text-align:center;"></div>
+        <button type="submit" class="btn btn-primary" id="verifySubmitBtn" style="justify-content:center;">${icon('check',16)} ${esc(t('confirm_','تأكيد'))}</button>
+      </form>
+      <p style="text-align:center; font-size:13px; color:var(--text-tertiary); margin-top:16px;">
+        <a href="#" id="resendCodeBtn" style="color:var(--cyan); font-weight:700; text-decoration:none;">${esc(t('resendCode_','إعادة إرسال الرمز'))}</a>
+        &nbsp;·&nbsp;
+        <a href="#" id="backToLoginBtn2" style="color:var(--text-secondary); text-decoration:none;">${esc(t('backToLogin_','رجوع لتسجيل الدخول'))}</a>
+      </p>
+    </div>
+  </div>`;
+}
+function renderSignupPending(){
+  return `
+  <div class="login-wrap">
+    ${loginParticles(18)}
+    <div class="login-card">
+      ${loginHeader()}
+      <div style="text-align:center; margin-top:24px;">
+        <div style="width:60px; height:60px; border-radius:16px; background:rgba(16,185,129,0.14); color:var(--success); display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">${icon('check',28)}</div>
+        <h3 style="color:#fff; font-family:var(--font-display); font-size:17px;">${esc(t('emailVerified_','تم التحقق من بريدك الإلكتروني بنجاح'))}</h3>
+        <p style="font-size:13.5px; color:var(--text-tertiary); margin-top:10px; line-height:1.7;">${esc(t('pendingApprovalMsg_','حسابك الآن قيد المراجعة من الإدارة، هيتم تفعيله وإعطاؤك الصلاحيات المناسبة بعد الموافقة.'))}</p>
+      </div>
+      <button class="btn btn-ghost" id="backToLoginBtn3" style="width:100%; justify-content:center; margin-top:24px;">${esc(t('backToLogin_','رجوع لتسجيل الدخول'))}</button>
     </div>
   </div>`;
 }
 function bindLoginEvents(){
+  if(authView==='signup-details') return bindSignupDetailsEvents();
+  if(authView==='signup-verify') return bindSignupVerifyEvents();
+  if(authView==='signup-pending') return bindSignupPendingEvents();
   const form = document.getElementById('loginForm');
   form.addEventListener('submit', e=>{
     e.preventDefault();
@@ -1603,6 +1702,77 @@ function bindLoginEvents(){
       err.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة';
     }
   });
+  document.getElementById('goSignupBtn').addEventListener('click', e=>{ e.preventDefault(); authView='signup-details'; render(); });
+}
+function bindSignupDetailsEvents(){
+  document.getElementById('backToLoginBtn').addEventListener('click', e=>{ e.preventDefault(); authView='login'; render(); });
+  document.getElementById('signupForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const errEl = document.getElementById('signupError');
+    errEl.style.display='none';
+    const name = document.getElementById('suName').value.trim();
+    const email = document.getElementById('suEmail').value.trim();
+    const username = document.getElementById('suUsername').value.trim();
+    const password = document.getElementById('suPassword').value;
+    const password2 = document.getElementById('suPassword2').value;
+    const showErr = (msg)=>{ errEl.textContent = msg; errEl.style.display='block'; };
+    if(!name || !email || !username || !password) return showErr('من فضلك املأ كل الحقول');
+    if(password.length < 4) return showErr('كلمة المرور قصيرة جداً');
+    if(password !== password2) return showErr('كلمتا المرور غير متطابقتين');
+    const db = App.db;
+    if(db.systemUsers.some(u=>u.username===username) || (db.pendingUsers||[]).some(p=>p.username===username && p.status==='pending')){
+      return showErr('اسم المستخدم ده مستخدم بالفعل');
+    }
+    if(!supabaseClient){ return showErr('التسجيل غير متاح حالياً، يرجى التواصل مع الإدارة'); }
+    const btn = document.getElementById('suSubmitBtn');
+    btn.disabled = true; btn.textContent = '...جاري الإرسال';
+    try{
+      const { error } = await supabaseClient.auth.signInWithOtp({ email, options:{ shouldCreateUser:true } });
+      if(error) throw error;
+      signupTemp = { name, email, username, password };
+      authView = 'signup-verify';
+      render();
+    }catch(err){
+      console.error('OTP send error:', err);
+      showErr('تعذر إرسال رمز التحقق، تأكد من صحة البريد الإلكتروني وحاول مرة أخرى');
+      btn.disabled = false; btn.innerHTML = `${icon('bell',16)} إرسال رمز التحقق`;
+    }
+  });
+}
+function bindSignupVerifyEvents(){
+  document.getElementById('backToLoginBtn2').addEventListener('click', e=>{ e.preventDefault(); authView='login'; signupTemp=null; render(); });
+  document.getElementById('resendCodeBtn').addEventListener('click', async e=>{
+    e.preventDefault();
+    if(!signupTemp || !supabaseClient) return;
+    try{ await supabaseClient.auth.signInWithOtp({ email:signupTemp.email, options:{ shouldCreateUser:true } }); App.showToast('تم إعادة إرسال الرمز'); }
+    catch(err){ App.showToast('تعذر إعادة الإرسال', 'error'); }
+  });
+  document.getElementById('verifyForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const errEl = document.getElementById('verifyError');
+    errEl.style.display='none';
+    const code = document.getElementById('verifyCode').value.trim();
+    if(!code || !signupTemp) return;
+    if(!supabaseClient){ errEl.textContent='التحقق غير متاح حالياً'; errEl.style.display='block'; return; }
+    const btn = document.getElementById('verifySubmitBtn');
+    btn.disabled = true; btn.textContent = '...جاري التحقق';
+    try{
+      const { error } = await supabaseClient.auth.verifyOtp({ email:signupTemp.email, token:code, type:'email' });
+      if(error) throw error;
+      App.addPendingUser(signupTemp);
+      signupTemp = null;
+      authView = 'signup-pending';
+      render();
+    }catch(err){
+      console.error('OTP verify error:', err);
+      errEl.textContent = 'الرمز غير صحيح، حاول مرة أخرى';
+      errEl.style.display = 'block';
+      btn.disabled = false; btn.innerHTML = `${icon('check',16)} تأكيد`;
+    }
+  });
+}
+function bindSignupPendingEvents(){
+  document.getElementById('backToLoginBtn3').addEventListener('click', ()=>{ authView='login'; render(); });
 }
 
 /* ============ NAV STRUCTURE ============ */
@@ -1718,6 +1888,12 @@ const I18N = {
       invitationsHint_:"Number of times a member can bring a guest — shown in the members list and decreases automatically when used",
       invitationsExhausted_:'No invitations remaining', useInvitation_:'Click when a guest arrives with the member',
       countryCode_:'Country Code (WhatsApp)', countryCodeHint_:"Added automatically to members' numbers when messaging them on WhatsApp from the members list",
+      noAccount_:"Don't have an account?", createAccount_:'Create new account', email_:'Email',
+      confirmPassword_:'Confirm password', sendCode_:'Send verification code', backToLogin_:'Back to login',
+      codeSentTo_:'A 6-digit verification code was sent to', confirm_:'Confirm', resendCode_:'Resend code',
+      emailVerified_:'Email verified successfully', pendingApprovalMsg_:'Your account is now under admin review — it will be activated with the right permissions once approved.',
+      pendingRequests_:'New Account Requests', approve_:'Approve', reject_:'Reject',
+      approveAccount_:'Approve Account', approveHint_:'Default permissions will be applied based on the role — you can adjust them later from edit user.',
       logoHint_:'Square image preferred, under 1MB — shown in the sidebar for all users',
       newMembersGrowth_:'New Members Growth', totalMembers_:'Total Members', quickAlerts_:'Quick Alerts',
       needRenewal_:'Need renewal', totalDebt_:'Total owed', checkedInToday_:'checked in today',
@@ -4043,7 +4219,25 @@ function renderSettingsTab(tab){
     </div>`;
   }
   // users
-  return `<div style="display:flex; justify-content:flex-end; margin-bottom:12px;"><button class="btn btn-primary btn-sm" id="addUserBtn">${icon('plus',15)} ${esc(t('add_','إضافة'))} ${esc(t('user_','مستخدم'))}</button></div>
+  const pending = (db.pendingUsers||[]).filter(p=>p.status==='pending');
+  return `
+  ${pending.length ? `
+  <div class="card" style="padding:18px; margin-bottom:18px; border-color:rgba(245,158,11,0.35);">
+    <div class="card-head" style="margin-bottom:12px;">
+      <div class="section-title" style="margin:0; font-size:var(--fs-body);"><span class="bar" style="background:linear-gradient(180deg,var(--warning),var(--danger));"></span> ${esc(t('pendingRequests_','طلبات حسابات جديدة'))}</div>
+      <span class="badge badge-warn">${numAr(pending.length)}</span>
+    </div>
+    ${pending.map(p=>`<div style="display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--border-default);">
+      <div class="avatar-circle" style="background:linear-gradient(135deg, rgba(245,158,11,0.24), rgba(245,158,11,0.08)); color:var(--warning); flex-shrink:0;">${esc(getInitials(p.name))}</div>
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:700; color:#fff; font-size:var(--fs-body);">${esc(p.name)}</div>
+        <div style="font-size:var(--fs-caption); color:var(--text-tertiary);" dir="ltr" style="text-align:end;">${esc(p.email)} — ${esc(p.username)}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-approve-pending="${p.id}">${icon('check',13)} ${esc(t('approve_','اعتماد'))}</button>
+      <button class="icon-action" data-reject-pending="${p.id}" style="color:var(--danger);" title="${esc(t('reject_','رفض'))}">${icon('x',13)}</button>
+    </div>`).join('')}
+  </div>` : ''}
+  <div style="display:flex; justify-content:flex-end; margin-bottom:12px;"><button class="btn btn-primary btn-sm" id="addUserBtn">${icon('plus',15)} ${esc(t('add_','إضافة'))} ${esc(t('user_','مستخدم'))}</button></div>
   <div class="card"><table>
     <thead><tr><th>${esc(t('name','الاسم'))}</th><th>${esc(t('username_','اسم المستخدم'))}</th><th>${esc(t('role_','الدور'))}</th><th>${esc(t('status','الحالة'))}</th><th></th></tr></thead>
     <tbody>${db.systemUsers.map(u=>`<tr class="tbl-row">
@@ -4118,7 +4312,57 @@ function bindSettingsTabEvents(tab){
         confirmAction('حذف المستخدم','هل تريد حذف هذا المستخدم؟', ()=>{ App.deleteUser(id); closeModal(); refreshPage(); });
       });
     });
+    document.querySelectorAll('[data-approve-pending]').forEach(el=>{
+      el.addEventListener('click', ()=>openApprovePendingModal(el.getAttribute('data-approve-pending')));
+    });
+    document.querySelectorAll('[data-reject-pending]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const id = el.getAttribute('data-reject-pending');
+        confirmAction('رفض الطلب','هل تريد رفض طلب إنشاء هذا الحساب؟', ()=>{ App.rejectPendingUser(id); closeModal(); refreshPage(); });
+      });
+    });
   }
+}
+/* Admin picks a role (and can fine-tune permissions) to finalize a pending signup request. */
+function openApprovePendingModal(pendingId){
+  const db = App.db;
+  const pu = db.pendingUsers.find(p=>p.id===pendingId);
+  if(!pu) return;
+  const defaultPermsByRole = {
+    owner:{dashboard:true,members:true,addMember:true,packages:true,trainers:true,private:true,attendance:true,finance:true,reports:true,settings:true,editSubsFinance:true,deleteGeneral:true,renewGeneral:true},
+    reception:{dashboard:true,members:true,addMember:true,packages:false,trainers:false,private:true,attendance:true,finance:false,reports:false,settings:false,editSubsFinance:false,deleteGeneral:false,renewGeneral:true},
+    accountant:{dashboard:true,members:false,addMember:false,packages:false,trainers:false,private:false,attendance:false,finance:true,reports:true,settings:false,editSubsFinance:true,deleteGeneral:false,renewGeneral:false},
+    trainer:{dashboard:true,members:false,addMember:false,packages:false,trainers:false,private:true,attendance:true,finance:false,reports:false,settings:false,editSubsFinance:false,deleteGeneral:false,renewGeneral:false},
+  };
+  openModal(`
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box animate-modal-in">
+      <div class="modal-header"><div style="font-weight:800;">${esc(t('approveAccount_','اعتماد حساب'))} — ${esc(pu.name)}</div><button class="icon-action" id="modalCloseBtn">${icon('x',16)}</button></div>
+      <div class="modal-body">
+        <div style="font-size:var(--fs-caption); color:var(--text-tertiary); margin-bottom:14px;">${esc(pu.email)} — ${esc(pu.username)}</div>
+        <label class="f-label">${esc(t('role_','الدور'))}</label>
+        <select class="f-input" id="apRole">
+          <option value="reception">${esc(roleLabel('reception'))}</option>
+          <option value="accountant">${esc(roleLabel('accountant'))}</option>
+          <option value="trainer">${esc(roleLabel('trainer'))}</option>
+          <option value="owner">${esc(roleLabel('owner'))}</option>
+        </select>
+        <div style="font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:10px;">${esc(t('approveHint_','هيتم تفعيل صلاحيات افتراضية حسب الدور — تقدر تعدلها بعدين من تعديل المستخدم'))}</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="apSave">${icon('check',15)} ${esc(t('approve_','اعتماد'))}</button>
+        <button class="btn btn-ghost" id="modalCancelBtn">إلغاء</button>
+      </div>
+    </div>
+  </div>`);
+  document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.target.id==='modalOverlay') closeModal(); });
+  document.getElementById('apSave').addEventListener('click', ()=>{
+    const role = document.getElementById('apRole').value;
+    App.approvePendingUser(pendingId, role, defaultPermsByRole[role]);
+    closeModal(); refreshPage();
+  });
 }
 function openUserModal(id){
   const db = App.db;
