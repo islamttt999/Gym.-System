@@ -185,6 +185,7 @@ a{color:inherit; text-decoration:none;}
 /* Quick actions grid */
 .qa-btn{display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:10px; font-size:var(--fs-label); font-weight:800; color:#fff; border:none; cursor:pointer; width:100%; margin-bottom:8px; transition:.15s;}
 .qa-btn:hover{filter:brightness(1.12); transform:translateY(-1px);}
+.goal-card:hover{border-color:var(--border-hover); transform:translateY(-2px);}
 .qa-btn:last-child{margin-bottom:0;}
 
 /* Bottom summary bar */
@@ -740,6 +741,7 @@ const DEFAULTS = {
     {id:'su3',username:'accountant',password:'1234',role:'accountant',name:'فهد المحاسب',status:'active',perms:{dashboard:true,members:false,addMember:false,packages:false,trainers:false,private:false,attendance:false,finance:true,reports:true,settings:false}},
   ],
   pendingUsers:[],
+  fitnessPlans:[],
   trainerAttendance:[],
   salaryPayments:[],
 };
@@ -776,7 +778,7 @@ const TABLE_MAP = {
   attendance: 'attendance', trainerAttendance: 'trainer_attendance',
   privateSessions: 'private_sessions', systemUsers: 'users',
   salaryPayments: 'salary_payments', classes: 'classes',
-  schedule: 'schedules', settings: 'settings', pendingUsers: 'pending_users'
+  schedule: 'schedules', settings: 'settings', pendingUsers: 'pending_users', fitnessPlans: 'fitness_plans'
 };
 
 const COL_MAP = {
@@ -788,7 +790,7 @@ const COL_MAP = {
   invitationsTotal:'invitations_total', invitationsRemaining:'invitations_remaining',
   created:'created_at', updatedAt:'updated_at',
   specialty:'specialty', salary:'salary', commissionPct:'commission_pct',
-  shiftStart:'shift_start', shiftEnd:'shift_end', dayOff:'day_off', status:'status',
+  shiftStart:'shift_start', shiftEnd:'shift_end', dayOff:'day_off', status:'status', photoUrl:'photo_url',
   price:'price', duration:'duration', invitations:'invitations', active:'active',
   type:'type', category:'category', desc:'description', amount:'amount',
   method:'method', positive:'positive', trainerName:'trainer_name',
@@ -806,7 +808,9 @@ const COL_MAP = {
   classId:'class_id', gymName:'gym_name', adminName:'admin_name',
   currency:'currency', currencySymbol:'currency_symbol', phonePrefix:'phone_prefix',
   logoUrl:'logo_url', notifications:'notifications',
-  email:'email', requestedAt:'requested_at', verifiedAt:'verified_at'
+  email:'email', requestedAt:'requested_at', verifiedAt:'verified_at',
+  clientName:'client_name', memberId:'member_id', age:'age', height:'height', weight:'weight',
+  gender:'gender', goal:'goal', createdAt:'created_at', data:'data'
 };
 
 const REV_COL_MAP = {};
@@ -923,6 +927,7 @@ function normalizeDB(db) {
   if(!Array.isArray(db.schedule)) db.schedule=DEFAULTS.schedule.slice();
   if(!Array.isArray(db.systemUsers) || db.systemUsers.length===0) db.systemUsers=DEFAULTS.systemUsers.slice();
   if(!Array.isArray(db.pendingUsers)) db.pendingUsers=[];
+  if(!Array.isArray(db.fitnessPlans)) db.fitnessPlans=[];
   if(!Array.isArray(db.trainerAttendance)) db.trainerAttendance=[];
   if(!Array.isArray(db.salaryPayments)) db.salaryPayments=[];
   db.members.forEach((m,i)=>{ if(!m.code) m.code='GYM-'+String(i+1).padStart(4,'0'); if(m.remaining===undefined) m.remaining=0; });
@@ -1210,6 +1215,135 @@ function monthLabel(ym){
 
 
 
+/* ============ FITNESS & NUTRITION PLAN ENGINE ============
+   Rule-based generator (BMR/TDEE formulas + curated food & exercise libraries).
+   Runs 100% locally — no external AI API key needed, so it works for free,
+   offline, and instantly with no usage costs or data leaving the browser. */
+const FOOD_DB = {
+  protein: {
+    bulk: ['صدور دجاج مشوية','لحم بقري قليل الدهن','بيض كامل (3-4 بيضات)','سمك السلمون','جبن قريش كامل الدسم','ستيك لحم أحمر'],
+    cut: ['صدور دجاج مسلوقة','بياض بيض (5-6 بيضات)','سمك مشوي (بلطي/سلمون)','جبن قريش قليل الدسم','تونة بالماء','زبادي يوناني قليل الدسم'],
+    fitness: ['دجاج مشوي','بيض كامل (2-3 بيضات)','زبادي يوناني','سمك مشوي','جبن قريش'],
+  },
+  carb: {
+    bulk: ['أرز أبيض','شوفان بالحليب','بطاطا مسلوقة','خبز بر','مكرونة قمح كامل','بطاطا حلوة'],
+    cut: ['أرز بني (كمية محدودة)','شوفان بالماء','بطاطا حلوة مسلوقة','كينوا','خضروات نشوية'],
+    fitness: ['أرز بني','شوفان','بطاطا حلوة','خبز بر'],
+  },
+  fat: {
+    bulk: ['زبدة فول سوداني طبيعية','زيت زيتون','مكسرات مشكلة (لوز/جوز)','أفوكادو'],
+    cut: ['زيت زيتون (ملعقة صغيرة)','مكسرات (حفنة صغيرة)','ربع حبة أفوكادو'],
+    fitness: ['زيت زيتون','مكسرات (حفنة)','أفوكادو'],
+  },
+  veg: ['خس وخيار وطماطم','بروكلي مطهو بالبخار','سبانخ طازجة','فلفل ألوان مشوي','سلطة خضراء مشكلة','جزر وكرفس'],
+  fruit: ['موزة','تفاحة','برتقالة','كوب فراولة','شريحة بطيخ','كيوي'],
+  drink: ['ماء (لتر ونص على الأقل يومياً)','شاي أخضر بدون سكر','قهوة سادة بدون سكر'],
+};
+const EXERCISE_DB = {
+  'الصدر': ['بنش برس بار مسطح','بنش برس دمبل','تفتيح دمبل','ضغط عريض (Wide Push-up)','بنش برس مائل','كروس أوفر كابل'],
+  'الظهر': ['سحب أمامي (Lat Pulldown)','سحب أرضي (Seated Row)','ديدليفت','بار فيكس (Pull-up)','باربل رو منحني','سحب T-Bar'],
+  'الأكتاف': ['ضغط كتف بار (Overhead Press)','رفرفة جانبية دمبل','رفرفة خلفية','ضغط أراسط (Arnold Press)','رفعة أمامية'],
+  'البايسبس': ['باربل كيرل','دمبل كيرل بالتناوب','كيرل تركيز','كيرل مطرقة (Hammer Curl)'],
+  'الترايسبس': ['بوش داون كابل','ضغط فرنسي (Skull Crusher)','ديبس متوازي','ضغط ضيق (Close-Grip Bench)'],
+  'الساعد': ['رست كيرل (Wrist Curl)','فارمر ووك (Farmer Walk)'],
+  'البطن': ['كرانش','بلانك','رفع أرجل معلق','عجلة البطن (Ab Wheel)'],
+  'الأرجل': ['سكوات بار (Squat)','ليج بريس','لانجز (Lunges)','ليج إكستنشن','سكوات بلغاري'],
+  'السمانة': ['ضغط سمانة واقف (Standing Calf Raise)','ضغط سمانة جالس (Seated Calf Raise)'],
+  'المؤخرة': ['هيب ثراست (Hip Thrust)','رفعة رومانية (RDL)','كيك باك كابل'],
+};
+const GOAL_LABELS = { bulk:{ar:'تضخيم العضلات',emoji:'💪',en:'Muscle Gain'}, cut:{ar:'خسارة الدهون',emoji:'🔥',en:'Fat Loss'}, fitness:{ar:'تحسين اللياقة',emoji:'🏃',en:'Fitness Improvement'} };
+function pickRandom(arr, n){
+  const copy = (arr||[]).slice(); const out=[];
+  for(let i=0;i<n && copy.length;i++){ const idx=Math.floor(Math.random()*copy.length); out.push(copy.splice(idx,1)[0]); }
+  return out;
+}
+function generateWorkoutSplit(goal){
+  if(goal==='bulk') return { name:'Push / Pull / Legs — تضخيم العضلات', days:[
+    {label:'اليوم 1 — Push (صدر / أكتاف / ترايسبس)', muscles:['الصدر','الأكتاف','الترايسبس']},
+    {label:'اليوم 2 — Pull (ظهر / بايسبس / ساعد)', muscles:['الظهر','البايسبس','الساعد']},
+    {label:'اليوم 3 — Legs (أرجل / سمانة / مؤخرة)', muscles:['الأرجل','السمانة','المؤخرة']},
+    {label:'اليوم 4 — Push (صدر / أكتاف / ترايسبس)', muscles:['الصدر','الأكتاف','الترايسبس']},
+    {label:'اليوم 5 — Pull (ظهر / بايسبس / ساعد)', muscles:['الظهر','البايسبس','الساعد']},
+    {label:'اليوم 6 — Legs + بطن', muscles:['الأرجل','البطن']},
+  ]};
+  if(goal==='cut') return { name:'Full Body + HIIT — خسارة الدهون', days:[
+    {label:'اليوم 1 — جسم كامل (قوة)', muscles:['الصدر','الظهر','الأرجل']},
+    {label:'اليوم 2 — HIIT + كارديو', muscles:['كارديو']},
+    {label:'اليوم 3 — جسم كامل (أكتاف وذراعين وبطن)', muscles:['الأكتاف','البايسبس','الترايسبس','البطن']},
+    {label:'اليوم 4 — HIIT + كارديو', muscles:['كارديو']},
+    {label:'اليوم 5 — تمرين دائري (Circuit Training)', muscles:['الأرجل','الصدر','الظهر']},
+  ]};
+  return { name:'Upper / Lower — تحسين اللياقة', days:[
+    {label:'اليوم 1 — Upper (علوي)', muscles:['الصدر','الظهر','الأكتاف']},
+    {label:'اليوم 2 — Lower (سفلي)', muscles:['الأرجل','السمانة','المؤخرة']},
+    {label:'اليوم 3 — كارديو خفيف ومرونة', muscles:['كارديو']},
+    {label:'اليوم 4 — علوي (ذراعين وبطن)', muscles:['البايسبس','الترايسبس','البطن']},
+  ]};
+}
+function dayExercises(muscles, goal){
+  if(muscles.length===1 && muscles[0]==='كارديو'){
+    return [
+      {name:'كارديو مستمر (جري / دراجة / إليبتيكال)', muscle:'قلب وأوعية دموية', sets:'—', reps:'30–40 دقيقة', rest:'—', difficulty:'حسب مستوى اللياقة'},
+      {name:'تمارين HIIT (فترات عالية الشدة)', muscle:'كامل الجسم', sets:'6–8 جولات', reps:'30 ث عمل / 30 ث راحة', rest:'—', difficulty:'متوسط–عالي'},
+    ];
+  }
+  const cfg = goal==='bulk' ? {sets:4, reps:'8–10', rest:'90 ثانية', diff:'متوسط–متقدم'}
+            : goal==='cut'  ? {sets:3, reps:'12–15', rest:'45 ثانية', diff:'متوسط'}
+            : {sets:3, reps:'10–12', rest:'60 ثانية', diff:'مبتدئ–متوسط'};
+  const list = [];
+  muscles.forEach(m=>{
+    const count = (m==='البطن'||m==='الساعد'||m==='السمانة') ? 1 : 2;
+    pickRandom(EXERCISE_DB[m]||[], count).forEach(name=> list.push({ name, muscle:m, sets:cfg.sets, reps:cfg.reps, rest:cfg.rest, difficulty:cfg.diff }));
+  });
+  return list;
+}
+function generateFitnessPlan({age, height, weight, gender, goal}){
+  const bmr = gender==='female' ? (10*weight+6.25*height-5*age-161) : (10*weight+6.25*height-5*age+5);
+  const tdee = Math.round(bmr*1.55);
+  let targetCal, proteinPerKg, fatPct;
+  if(goal==='bulk'){ targetCal=Math.round(tdee*1.15); proteinPerKg=2.0; fatPct=0.25; }
+  else if(goal==='cut'){ targetCal=Math.round(tdee*0.8); proteinPerKg=2.2; fatPct=0.28; }
+  else { targetCal=tdee; proteinPerKg=1.8; fatPct=0.27; }
+  const proteinG = Math.round(weight*proteinPerKg);
+  const proteinCal = proteinG*4;
+  const fatCal = Math.round(targetCal*fatPct);
+  const fatG = Math.round(fatCal/9);
+  const carbCal = Math.max(0, targetCal-proteinCal-fatCal);
+  const carbG = Math.round(carbCal/4);
+
+  const MEAL_SLOTS = [
+    {label:'الإفطار', pct:0.20, protein:true, carb:true, fat:true, veg:false, fruit:true},
+    {label:'وجبة خفيفة صباحية', pct:0.08, protein:false, carb:false, fat:true, veg:false, fruit:true},
+    {label:'الغداء', pct:0.26, protein:true, carb:true, fat:true, veg:true, fruit:false},
+    {label:'وجبة قبل التمرين', pct:0.08, protein:true, carb:true, fat:false, veg:false, fruit:false},
+    {label:'وجبة بعد التمرين', pct:0.10, protein:true, carb:true, fat:false, veg:false, fruit:false},
+    {label:'وجبة خفيفة مسائية', pct:0.06, protein:true, carb:false, fat:false, veg:false, fruit:false},
+    {label:'العشاء', pct:0.17, protein:true, carb:false, fat:true, veg:true, fruit:false},
+    {label:'وجبة قبل النوم', pct:0.05, protein:true, carb:false, fat:false, veg:false, fruit:false},
+  ];
+  const mealPlan = MEAL_SLOTS.map(slot=>{
+    const items = [];
+    if(slot.protein) items.push({label:'مصدر البروتين', value:pickRandom(FOOD_DB.protein[goal],1)[0]});
+    if(slot.carb) items.push({label:'مصدر الكربوهيدرات', value:pickRandom(FOOD_DB.carb[goal],1)[0]});
+    if(slot.fat) items.push({label:'مصدر الدهون الصحية', value:pickRandom(FOOD_DB.fat[goal],1)[0]});
+    if(slot.veg) items.push({label:'الخضروات', value:pickRandom(FOOD_DB.veg,1)[0]});
+    if(slot.fruit) items.push({label:'الفاكهة', value:pickRandom(FOOD_DB.fruit,1)[0]});
+    items.push({label:'المشروبات', value:pickRandom(FOOD_DB.drink,1)[0]});
+    return { label:slot.label, calories:Math.round(targetCal*slot.pct), items };
+  });
+
+  const splitDef = generateWorkoutSplit(goal);
+  const workoutPlan = { name:splitDef.name, days: splitDef.days.map(d=>({ label:d.label, exercises:dayExercises(d.muscles, goal) })) };
+
+  const SUPP_MAP = {
+    bulk: ['بروتين واي (Whey Protein)','كرياتين مونوهيدرات','ملتي فيتامين','جلوتامين'],
+    cut: ['بروتين واي (Whey Protein)','أوميجا 3','ملتي فيتامين'],
+    fitness: ['بروتين واي (Whey Protein)','أوميجا 3','بري وورك أوت (اختياري)'],
+  };
+
+  return { bmr:Math.round(bmr), tdee, targetCal, proteinG, carbG, fatG, mealPlan, workoutPlan, supplements:SUPP_MAP[goal] };
+}
+
 const App = {
   db: JSON.parse(JSON.stringify(DEFAULTS)),
   currentPage: 'dashboard',
@@ -1275,7 +1409,7 @@ const App = {
     if(!this.currentUser) return true;
     if(this.currentUser.role==='owner') return true;
     const p = this.currentUser.perms || {};
-    const map = {'dashboard':'dashboard','members':'members','add-member':'addMember','expired':'members','followup':'members','active-subs':'members','packages':'packages','trainers':'trainers','trainer-clients':'trainers','trainer-salaries':'trainers','trainer-attendance':'trainers','attendance':'attendance','finance':'finance','reports':'reports','settings':'settings'};
+    const map = {'dashboard':'dashboard','members':'members','add-member':'addMember','expired':'members','followup':'members','active-subs':'members','packages':'packages','trainers':'trainers','trainer-clients':'trainers','fitness-plans':'trainers','trainer-salaries':'trainers','trainer-attendance':'trainers','attendance':'attendance','finance':'finance','reports':'reports','settings':'settings'};
     const key = map[page];
     if(!key) return true;
     return p[key]!==false;
@@ -1454,7 +1588,8 @@ const App = {
     rec.checkInApproved = true;
     rec.checkInApprovedBy = this.currentUser ? this.currentUser.name : 'مالك';
     rec.status = rec.checkOut ? (rec.checkOutApproved?'approved':'pending_checkout') : 'in_progress';
-    this.persist();
+    queueChange('trainerAttendance', rec, 'update');
+    this.persist(); syncPending();
     this.showToast('تم اعتماد الدخول');
   },
   approveCheckOut(id){
@@ -1463,8 +1598,28 @@ const App = {
     rec.checkOutApproved = true;
     rec.checkOutApprovedBy = this.currentUser ? this.currentUser.name : 'مالك';
     rec.status = 'approved';
-    this.persist();
+    queueChange('trainerAttendance', rec, 'update');
+    this.persist(); syncPending();
     this.showToast('تم اعتماد الانصراف');
+  },
+  /* Rejecting a check-in invalidates the whole open record — the trainer needs to clock in again properly. */
+  rejectCheckIn(id){
+    this.db.trainerAttendance = this.db.trainerAttendance.filter(r=>r.id!==id);
+    queueChange('trainerAttendance', {id}, 'delete');
+    this.persist(); syncPending();
+    this.showToast('تم رفض تسجيل الدخول وحذف السجل', 'error');
+  },
+  /* Rejecting a check-out clears it and puts the record back to "in progress" so it can be redone correctly. */
+  rejectCheckOut(id){
+    const rec = this.db.trainerAttendance.find(r=>r.id===id);
+    if(!rec) return;
+    rec.checkOut = null; rec.hours = 0; rec.lateMinutes = 0; rec.earlyMinutes = 0;
+    rec.deductionFraction = 0; rec.deductionLabel = null;
+    rec.checkOutApproved = false; rec.checkOutApprovedBy = null;
+    rec.status = rec.checkInApproved ? 'in_progress' : 'pending_checkin';
+    queueChange('trainerAttendance', rec, 'update');
+    this.persist(); syncPending();
+    this.showToast('تم رفض الانصراف — رجع السجل لحالة العمل', 'warning');
   },
   /* Owner-only manual correction of a check-in/out time — recalculates everything downstream. */
   editTrainerAttendance(id, checkIn, checkOut){
@@ -1517,6 +1672,20 @@ const App = {
   /* --- Users --- */
   addUser(u){ const nu=Object.assign({},u,{id:genId('su')}); this.db.systemUsers.push(nu); queueChange('systemUsers', nu, 'insert'); this.persist(); this.showToast('تم إضافة المستخدم'); syncPending(); },
   /* Called after email OTP verification succeeds — creates a pending signup request awaiting admin approval. */
+  addFitnessPlan(plan){
+    const rec = Object.assign({}, plan, { id:genId('fp'), createdAt:new Date().toISOString() });
+    this.db.fitnessPlans.push(rec);
+    queueChange('fitnessPlans', rec, 'insert');
+    this.persist(); syncPending();
+    this.showToast('تم إنشاء البرنامج بنجاح');
+    return rec;
+  },
+  deleteFitnessPlan(id){
+    this.db.fitnessPlans = this.db.fitnessPlans.filter(p=>p.id!==id);
+    queueChange('fitnessPlans', {id}, 'delete');
+    this.persist(); syncPending();
+    this.showToast('تم حذف البرنامج');
+  },
   addPendingUser(u){
     const nu = Object.assign({}, u, {id:genId('pu'), status:'pending', requestedAt:new Date().toISOString()});
     this.db.pendingUsers.push(nu);
@@ -1791,6 +1960,7 @@ const NAV_GROUPS = [
     {page:'trainers', label:'قائمة المدربين', icon:'award'},
     {page:'trainer-attendance', label:'حضور المدربين', icon:'calcheck'},
     {page:'trainer-clients', label:'عملاء المدربين', icon:'usersround'},
+    {page:'fitness-plans', label:'برنامج اللياقة والتغذية', icon:'dumbbell'},
     {page:'trainer-salaries', label:'رواتب وعمولات', icon:'wallet'},
   ]},
   { label:'التشغيل', items:[
@@ -1812,6 +1982,7 @@ const PAGE_TITLES = {
   'dashboard':'لوحة التحكم','members':'قائمة الأعضاء','add-member':'إضافة عضو جديد','expired':'الاشتراكات المنتهية',
   'followup':'متابعة العملاء','active-subs':'الاشتراكات النشطة','packages':'إدارة الباقات','trainers':'قائمة المدربين',
   'trainer-clients':'عملاء المدربين','trainer-salaries':'رواتب وعمولات المدربين','attendance':'الحضور والانصراف',
+  'fitness-plans':'برنامج اللياقة والتغذية',
   'trainer-attendance':'حضور المدربين',
   'finance':'المالية','reports':'ملخص التقارير','settings':'الإعدادات','schedule':'جدول الحصص','classes':'إدارة الفصول',
   'user-profile':'الملف الشخصي',
@@ -1831,6 +2002,7 @@ const I18N = {
       'dashboard':'Dashboard','members':'Members List','add-member':'Add Member','expired':'Expired Subscriptions',
       'followup':'Customer Follow-up','active-subs':'Active Subscriptions','packages':'Packages','trainers':'Trainers List',
       'trainer-clients':'Trainer Clients','trainer-salaries':'Salaries & Commissions','attendance':'Attendance',
+      'fitness-plans':'Fitness & Nutrition Program',
       'trainer-attendance':'Trainer Attendance',
       'finance':'Finance','reports':'Reports Summary','settings':'Settings','schedule':'Class Schedule','classes':'Classes',
       'user-profile':'Profile',
@@ -1894,6 +2066,12 @@ const I18N = {
       emailVerified_:'Email verified successfully', pendingApprovalMsg_:'Your account is now under admin review — it will be activated with the right permissions once approved.',
       pendingRequests_:'New Account Requests', approve_:'Approve', reject_:'Reject',
       approveAccount_:'Approve Account', approveHint_:'Default permissions will be applied based on the role — you can adjust them later from edit user.',
+      fitnessNutritionTitle_:'Fitness & Nutrition Program', fitnessNutritionDesc_:'Create custom training and nutrition plans for clients in one click',
+      newPlan_:'New Plan', noPlansYet_:'No plans yet — click "New Plan" to get started',
+      existingMemberOptional_:'Choose an existing member (optional)', manualEntry_:'Manual entry',
+      clientName_:'Client Name', age_:'Age', heightCm_:'Height (cm)', weightKg_:'Weight (kg)',
+      responsibleTrainer_:'Responsible Trainer', goal_:'Goal', generatePlan_:'Generate Plan',
+      uploadPhoto_:'Upload Photo', removePhoto_:'Remove',
       logoHint_:'Square image preferred, under 1MB — shown in the sidebar for all users',
       newMembersGrowth_:'New Members Growth', totalMembers_:'Total Members', quickAlerts_:'Quick Alerts',
       needRenewal_:'Need renewal', totalDebt_:'Total owed', checkedInToday_:'checked in today',
@@ -2107,6 +2285,7 @@ function renderPage(page){
     case 'trainers': return renderTrainers();
     case 'trainer-attendance': return renderTrainerAttendance();
     case 'trainer-clients': return renderTrainerClients();
+    case 'fitness-plans': return renderFitnessPlans();
     case 'trainer-salaries': return renderTrainerSalaries();
     case 'attendance': return renderAttendance();
     case 'finance': return renderFinance();
@@ -2130,6 +2309,7 @@ function bindPageEvents(page){
     case 'trainers': return bindTrainersEvents();
     case 'trainer-attendance': return bindTrainerAttendanceEvents();
     case 'trainer-clients': return bindTrainerClientsEvents();
+    case 'fitness-plans': return bindFitnessPlansEvents();
     case 'trainer-salaries': return bindTrainerSalariesEvents();
     case 'attendance': return bindAttendanceEvents();
     case 'finance': return bindFinanceEvents();
@@ -3147,7 +3327,7 @@ function renderTrainers(){
       const fin = getTrainerFinancials(t, db);
       return `<div class="card" style="padding:18px;">
         <div style="display:flex; align-items:center; gap:12px;">
-          <div class="avatar-circle" style="width:44px; height:44px; font-size:16px; background:linear-gradient(135deg, rgba(0,102,255,0.24), rgba(0,212,255,0.08)); color:var(--cyan);">${esc(getInitials(t.name))}</div>
+          <div class="avatar-circle" style="width:44px; height:44px; font-size:16px; background:linear-gradient(135deg, rgba(0,102,255,0.24), rgba(0,212,255,0.08)); color:var(--cyan); overflow:hidden;">${t.photoUrl?`<img src="${t.photoUrl}" alt="" style="width:100%; height:100%; object-fit:cover;" />`:esc(getInitials(t.name))}</div>
           <div style="flex:1;">
             <div style="font-weight:800; color:#fff; font-size:15.5px;">${esc(t.name)}</div>
             <div style="font-size:12.5px; color:var(--text-tertiary);">${esc(t.code)} — ${esc(t.specialty)}</div>
@@ -3216,6 +3396,16 @@ function openTrainerModal(id){
     <div class="modal-box animate-modal-in">
       <div class="modal-header"><div style="font-weight:800;">${id?'تعديل':'إضافة'} مدرب</div><button class="icon-action" id="modalCloseBtn">${icon('x',16)}</button></div>
       <div class="modal-body">
+        <div style="display:flex; align-items:center; gap:16px; margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--border-default);">
+          <div class="avatar-circle" style="width:64px; height:64px; font-size:24px; background:linear-gradient(135deg, rgba(0,102,255,0.24), rgba(0,212,255,0.08)); color:var(--cyan);" id="trPhotoPreview">
+            ${t.photoUrl?`<img src="${t.photoUrl}" alt="" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />`:esc(getInitials(t.name||'مدرب'))}
+          </div>
+          <div>
+            <input type="file" accept="image/*" id="trPhotoFile" style="display:none;" />
+            <button class="btn btn-ghost btn-sm" id="trPhotoBtn" type="button">${icon('download',13)} ${esc(t('uploadPhoto_','رفع صورة'))}</button>
+            ${t.photoUrl?`<button class="btn btn-ghost btn-sm" id="trPhotoReset" type="button" style="color:var(--danger);">${icon('x',13)} ${esc(t('removePhoto_','إزالة'))}</button>`:''}
+          </div>
+        </div>
         <div class="grid2">
           <div style="grid-column:1/-1;"><label class="f-label">الاسم</label><input class="f-input" id="trName" value="${esc(t.name)}" /></div>
           <div><label class="f-label">التخصص</label><input class="f-input" id="trSpecialty" value="${esc(t.specialty)}" /></div>
@@ -3247,9 +3437,29 @@ function openTrainerModal(id){
   document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
   document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
   document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.target.id==='modalOverlay') closeModal(); });
+  let currentPhotoUrl = t.photoUrl || null;
+  const photoBtn = document.getElementById('trPhotoBtn');
+  const photoFile = document.getElementById('trPhotoFile');
+  const photoPreview = document.getElementById('trPhotoPreview');
+  if(photoBtn && photoFile){
+    photoBtn.addEventListener('click', ()=>photoFile.click());
+    photoFile.addEventListener('change', ()=>{
+      const file = photoFile.files[0];
+      if(!file) return;
+      if(file.size > 1024*1024){ App.showToast('حجم الصورة كبير، اختر أقل من 1 ميجابايت', 'error'); return; }
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        currentPhotoUrl = reader.result;
+        photoPreview.innerHTML = `<img src="${currentPhotoUrl}" alt="" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  const photoReset = document.getElementById('trPhotoReset');
+  if(photoReset) photoReset.addEventListener('click', ()=>{ currentPhotoUrl=null; photoPreview.innerHTML = esc(getInitials(document.getElementById('trName').value||'مدرب')); });
   document.getElementById('trSave').addEventListener('click', ()=>{
     const data = { name:document.getElementById('trName').value, specialty:document.getElementById('trSpecialty').value, phone:document.getElementById('trPhone').value, salary:Number(document.getElementById('trSalary').value)||0, commissionPct:Number(document.getElementById('trCommission').value)||0, status:document.getElementById('trStatus').value,
-      shiftStart:document.getElementById('trShiftStart').value||'09:00', shiftEnd:document.getElementById('trShiftEnd').value||'17:00', dayOff:document.getElementById('trDayOff').value||'fri' };
+      shiftStart:document.getElementById('trShiftStart').value||'09:00', shiftEnd:document.getElementById('trShiftEnd').value||'17:00', dayOff:document.getElementById('trDayOff').value||'fri', photoUrl:currentPhotoUrl };
     if(id) App.updateTrainer(id,data); else App.addTrainer(data);
     closeModal(); refreshPage();
   });
@@ -3427,6 +3637,245 @@ function openPrivateSessionLogModal(sessionId){
 }
 
 /* ============ TRAINER SALARIES ============ */
+/* ============ FITNESS & NUTRITION PROGRAM PAGE ============ */
+function renderFitnessPlans(){
+  const db = App.db;
+  const plans = (db.fitnessPlans||[]).slice().reverse();
+  return `
+  <div class="page-header" style="margin-bottom:16px;">
+    <div><h1 class="font-display" style="font-size:var(--fs-xl);">${esc(t('fitnessNutritionTitle_','برنامج اللياقة والتغذية'))}</h1><div class="desc">${esc(t('fitnessNutritionDesc_','إنشاء برامج تدريب وتغذية مخصصة للعملاء بضغطة واحدة'))}</div></div>
+    <button class="btn btn-primary btn-sm" id="newFitnessPlanBtn">${icon('plus',15)} ${esc(t('newPlan_','برنامج جديد'))}</button>
+  </div>
+  <div class="grid3">
+    ${plans.length ? plans.map(p=>{
+      const g = GOAL_LABELS[p.goal] || {ar:p.goal, emoji:''};
+      const trainer = db.trainers.find(x=>x.id===p.trainerId);
+      return `<div class="card" style="padding:18px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="avatar-circle" style="width:38px; height:38px; background:linear-gradient(135deg, rgba(139,92,246,0.24), rgba(139,92,246,0.08)); color:var(--purple);">${esc(getInitials(p.clientName))}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:800; color:#fff; font-size:var(--fs-body); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(p.clientName)}</div>
+            <div style="font-size:var(--fs-caption); color:var(--text-tertiary);">${numAr(p.age)} سنة — ${numAr(p.weight)} كجم — ${numAr(p.height)} سم</div>
+          </div>
+        </div>
+        <div style="margin-top:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span class="badge" style="background:rgba(139,92,246,0.12); color:var(--purple);">${g.emoji} ${esc(g.ar)}</span>
+          ${trainer?`<span class="badge badge-info">${icon('award',10)} ${esc(trainer.name)}</span>`:''}
+        </div>
+        <div style="font-size:var(--fs-caption); color:var(--text-tertiary); margin-top:10px;">${formatDate(p.createdAt?p.createdAt.slice(0,10):'')}</div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <button class="btn btn-ghost btn-sm" data-viewplan="${p.id}" style="flex:1; justify-content:center;">${icon('usercircle',13)} عرض</button>
+          <button class="btn btn-primary btn-sm" data-pdfplan="${p.id}" style="flex:1; justify-content:center;">${icon('download',13)} PDF</button>
+          <button class="icon-action" data-delplan="${p.id}" style="color:var(--danger);">${icon('trash',13)}</button>
+        </div>
+      </div>`;
+    }).join('') : `<div class="card" style="padding:40px; grid-column:1/-1;"><div class="empty-state">${icon('award',26)}<div style="margin-top:8px;">${esc(t('noPlansYet_','لا توجد برامج بعد — دوس "برنامج جديد" عشان تبدأ'))}</div></div></div>`}
+  </div>`;
+}
+function bindFitnessPlansEvents(){
+  const db = App.db;
+  document.getElementById('newFitnessPlanBtn').addEventListener('click', openNewFitnessPlanModal);
+  document.querySelectorAll('[data-viewplan]').forEach(el=>{
+    el.addEventListener('click', ()=>openFitnessPlanViewModal(el.getAttribute('data-viewplan')));
+  });
+  document.querySelectorAll('[data-pdfplan]').forEach(el=>{
+    el.addEventListener('click', ()=>exportFitnessPlanPDF(el.getAttribute('data-pdfplan')));
+  });
+  document.querySelectorAll('[data-delplan]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const id = el.getAttribute('data-delplan');
+      confirmAction('حذف البرنامج','هل تريد حذف هذا البرنامج؟', ()=>{ App.deleteFitnessPlan(id); closeModal(); refreshPage(); });
+    });
+  });
+}
+function openNewFitnessPlanModal(){
+  const db = App.db;
+  let selectedGoal = 'bulk';
+  openModal(`
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box animate-modal-in" style="max-width:520px;">
+      <div class="modal-header"><div style="font-weight:800;">${esc(t('newPlan_','برنامج جديد'))}</div><button class="icon-action" id="modalCloseBtn">${icon('x',16)}</button></div>
+      <div class="modal-body">
+        <label class="f-label">${esc(t('existingMemberOptional_','اختر عضو موجود (اختياري)'))}</label>
+        <select class="f-input" id="fpMember">
+          <option value="">${esc(t('manualEntry_','إدخال يدوي'))}</option>
+          ${db.members.map(m=>`<option value="${m.id}">${esc(m.name)} — ${esc(m.code)}</option>`).join('')}
+        </select>
+        <div class="grid2" style="margin-top:14px;">
+          <div style="grid-column:1/-1;"><label class="f-label">${esc(t('clientName_','اسم العميل'))}</label><input class="f-input" id="fpName" /></div>
+          <div><label class="f-label">${esc(t('age_','العمر'))}</label><input type="number" class="f-input" id="fpAge" value="25" min="10" max="90" /></div>
+          <div><label class="f-label">${esc(t('gender_','الجنس'))}</label><select class="f-input" id="fpGender"><option value="male">ذكر</option><option value="female">أنثى</option></select></div>
+          <div><label class="f-label">${esc(t('heightCm_','الطول (سم)'))}</label><input type="number" class="f-input" id="fpHeight" value="170" /></div>
+          <div><label class="f-label">${esc(t('weightKg_','الوزن (كجم)'))}</label><input type="number" class="f-input" id="fpWeight" value="70" /></div>
+          <div style="grid-column:1/-1;"><label class="f-label">${esc(t('responsibleTrainer_','المدرب المسؤول'))}</label>
+            <select class="f-input" id="fpTrainer"><option value="">—</option>${db.trainers.filter(t=>t.status==='active').map(tr=>`<option value="${tr.id}">${esc(tr.name)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <label class="f-label" style="margin-top:16px; display:block;">${esc(t('goal_','الهدف'))}</label>
+        <div class="grid3" id="fpGoalCards" style="gap:10px;">
+          ${Object.entries(GOAL_LABELS).map(([key,g])=>`<div class="goal-card ${key==='bulk'?'active':''}" data-goal="${key}" style="cursor:pointer; text-align:center; padding:16px 8px; border-radius:12px; border:1.5px solid var(--border-default); background:var(--navy-surface);">
+            <div style="font-size:26px;">${g.emoji}</div>
+            <div style="font-size:var(--fs-caption); font-weight:700; color:var(--text-secondary); margin-top:6px;">${esc(g.ar)}</div>
+          </div>`).join('')}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="fpGenerate">${icon('check',15)} ${esc(t('generatePlan_','إنشاء البرنامج'))}</button>
+        <button class="btn btn-ghost" id="modalCancelBtn">إلغاء</button>
+      </div>
+    </div>
+  </div>`);
+  document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.target.id==='modalOverlay') closeModal(); });
+  const memberSel = document.getElementById('fpMember');
+  memberSel.addEventListener('change', ()=>{
+    const m = db.members.find(x=>x.id===memberSel.value);
+    if(m){ document.getElementById('fpName').value = m.name; if(m.dob){ const age = Math.floor((Date.now()-new Date(m.dob).getTime())/(365.25*24*3600*1000)); if(age>0) document.getElementById('fpAge').value = age; } if(m.trainerId) document.getElementById('fpTrainer').value = m.trainerId; }
+  });
+  document.querySelectorAll('#fpGoalCards [data-goal]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      document.querySelectorAll('#fpGoalCards [data-goal]').forEach(x=>{ x.classList.remove('active'); x.style.borderColor='var(--border-default)'; x.style.background='var(--navy-surface)'; });
+      el.classList.add('active'); el.style.borderColor='var(--purple)'; el.style.background='rgba(139,92,246,0.1)';
+      selectedGoal = el.getAttribute('data-goal');
+    });
+  });
+  document.getElementById('fpGenerate').addEventListener('click', ()=>{
+    const name = document.getElementById('fpName').value.trim();
+    const age = Number(document.getElementById('fpAge').value)||25;
+    const gender = document.getElementById('fpGender').value;
+    const height = Number(document.getElementById('fpHeight').value)||170;
+    const weight = Number(document.getElementById('fpWeight').value)||70;
+    const trainerId = document.getElementById('fpTrainer').value || null;
+    const trainer = db.trainers.find(x=>x.id===trainerId);
+    if(!name){ App.showToast('من فضلك اكتب اسم العميل', 'error'); return; }
+    const computed = generateFitnessPlan({age,height,weight,gender,goal:selectedGoal});
+    const rec = App.addFitnessPlan({ memberId:memberSel.value||null, clientName:name, age, height, weight, gender, goal:selectedGoal, trainerId, trainerName:trainer?trainer.name:null, data:computed });
+    closeModal();
+    refreshPage();
+    openFitnessPlanViewModal(rec.id);
+  });
+}
+function planSummaryHtml(p){
+  const db = App.db;
+  const g = GOAL_LABELS[p.goal]||{ar:p.goal,emoji:''};
+  const d = p.data||{};
+  return `
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
+      <span class="badge" style="background:rgba(139,92,246,0.12); color:var(--purple); font-size:var(--fs-label); padding:6px 12px;">${g.emoji} ${esc(g.ar)}</span>
+      <span style="font-size:var(--fs-caption); color:var(--text-tertiary);">${numAr(p.age)} سنة · ${numAr(p.weight)} كجم · ${numAr(p.height)} سم</span>
+    </div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr); margin-bottom:20px;">
+      <div class="kpi-card" style="padding:12px;"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(d.tdee)}</div><div class="kpi-label">TDEE (سعرات الصيانة)</div></div>
+      <div class="kpi-card" style="padding:12px; --kpi-accent:var(--purple);"><div class="kpi-value" style="font-size:var(--fs-lg); color:var(--purple);">${numAr(d.targetCal)}</div><div class="kpi-label">السعرات المستهدفة</div></div>
+      <div class="kpi-card" style="padding:12px; --kpi-accent:var(--success);"><div class="kpi-value" style="font-size:var(--fs-lg); color:var(--success);">${numAr(d.proteinG)}g</div><div class="kpi-label">بروتين</div></div>
+      <div class="kpi-card" style="padding:12px; --kpi-accent:var(--gold);"><div class="kpi-value" style="font-size:var(--fs-lg); color:var(--gold);">${numAr(d.carbG)}g / ${numAr(d.fatG)}g</div><div class="kpi-label">كارب / دهون</div></div>
+    </div>
+    <div class="section-title" style="font-size:var(--fs-body);"><span class="bar"></span> 🍽️ النظام الغذائي</div>
+    <div class="card" style="padding:0; margin-bottom:20px;"><table>
+      <thead><tr><th>الوجبة</th><th>المكونات</th><th>السعرات</th></tr></thead>
+      <tbody>${(d.mealPlan||[]).map(m=>`<tr class="tbl-row">
+        <td style="color:#fff; font-weight:700; white-space:nowrap;">${esc(m.label)}</td>
+        <td>${m.items.map(i=>`<div style="margin-bottom:2px;"><span style="color:var(--text-tertiary);">${esc(i.label)}:</span> ${esc(i.value)}</div>`).join('')}</td>
+        <td style="color:var(--purple); font-weight:700; white-space:nowrap;">${numAr(m.calories)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <div class="section-title" style="font-size:var(--fs-body);"><span class="bar" style="background:linear-gradient(180deg,var(--cyan),var(--blue));"></span> 🏋️ النظام التمريني — ${esc(d.workoutPlan?d.workoutPlan.name:'')}</div>
+    ${(d.workoutPlan?d.workoutPlan.days:[]).map(day=>`
+      <div style="font-weight:700; color:#fff; margin:12px 0 6px;">${esc(day.label)}</div>
+      <div class="card" style="padding:0; margin-bottom:12px;"><table>
+        <thead><tr><th>التمرين</th><th>العضلة</th><th>مجموعات</th><th>تكرارات</th><th>راحة</th><th>الصعوبة</th></tr></thead>
+        <tbody>${day.exercises.map(ex=>`<tr class="tbl-row"><td style="color:#fff;">${esc(ex.name)}</td><td>${esc(ex.muscle)}</td><td>${ex.sets}</td><td>${ex.reps}</td><td>${ex.rest}</td><td>${ex.difficulty}</td></tr>`).join('')}</tbody>
+      </table></div>`).join('')}
+    <div class="section-title" style="font-size:var(--fs-body); margin-top:16px;"><span class="bar" style="background:linear-gradient(180deg,var(--gold),var(--gold-hover));"></span> 💊 المكملات الغذائية المقترحة</div>
+    <div style="display:flex; flex-wrap:wrap; gap:8px;">${(d.supplements||[]).map(s=>`<span class="badge badge-info">${esc(s)}</span>`).join('')}</div>
+  `;
+}
+function openFitnessPlanViewModal(id){
+  const db = App.db;
+  const p = db.fitnessPlans.find(x=>x.id===id);
+  if(!p) return;
+  openModal(`
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box animate-modal-in" style="max-width:640px;">
+      <div class="modal-header"><div style="font-weight:800;">${esc(p.clientName)}</div><button class="icon-action" id="modalCloseBtn">${icon('x',16)}</button></div>
+      <div class="modal-body" style="max-height:70vh; overflow-y:auto;">${planSummaryHtml(p)}</div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="viewPdfBtn">${icon('download',15)} تحميل PDF</button>
+        <button class="btn btn-ghost" id="modalCancelBtn">إغلاق</button>
+      </div>
+    </div>
+  </div>`);
+  document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.target.id==='modalOverlay') closeModal(); });
+  document.getElementById('viewPdfBtn').addEventListener('click', ()=>exportFitnessPlanPDF(id));
+}
+/* Builds a professional printable document (gym logo/name, trainer, client info, full plan)
+   and opens the browser print dialog — the person can "Save as PDF" from there. */
+function exportFitnessPlanPDF(id){
+  const db = App.db;
+  const p = db.fitnessPlans.find(x=>x.id===id);
+  if(!p) return;
+  const g = GOAL_LABELS[p.goal]||{ar:p.goal,emoji:''};
+  const d = p.data||{};
+  const trainer = db.trainers.find(x=>x.id===p.trainerId);
+  const logoHtml = db.gym.logoUrl ? `<img src="${db.gym.logoUrl}" style="width:56px;height:56px;object-fit:cover;border-radius:14px;" />` : `<div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0066FF,#00D4FF);display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;">🏋️</div>`;
+  const trainerPhotoHtml = trainer && trainer.photoUrl ? `<img src="${trainer.photoUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:50%;" />` : '';
+  const mealsHtml = (d.mealPlan||[]).map(m=>`
+    <tr><td style="font-weight:700;">${esc(m.label)}</td><td>${m.items.map(i=>`<div>${esc(i.label)}: ${esc(i.value)}</div>`).join('')}</td><td>${numAr(m.calories)}</td></tr>
+  `).join('');
+  const workoutHtml = (d.workoutPlan?d.workoutPlan.days:[]).map(day=>`
+    <h4 style="margin:14px 0 6px;">${esc(day.label)}</h4>
+    <table class="pplan-table"><thead><tr><th>التمرين</th><th>العضلة</th><th>مجموعات</th><th>تكرارات</th><th>راحة</th></tr></thead>
+    <tbody>${day.exercises.map(ex=>`<tr><td>${esc(ex.name)}</td><td>${esc(ex.muscle)}</td><td>${ex.sets}</td><td>${ex.reps}</td><td>${ex.rest}</td></tr>`).join('')}</tbody></table>
+  `).join('');
+  const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8" />
+    <title>برنامج ${esc(p.clientName)}</title>
+    <style>
+      body{font-family:'Segoe UI',Tahoma,Arial,sans-serif; padding:32px; color:#111; direction:rtl;}
+      .pplan-header{display:flex; align-items:center; gap:16px; border-bottom:3px solid #0066FF; padding-bottom:16px; margin-bottom:20px;}
+      .pplan-header h1{margin:0; font-size:22px;} .pplan-header p{margin:2px 0 0; color:#555; font-size:13px;}
+      .pplan-client{display:flex; justify-content:space-between; background:#f3f6fb; padding:14px 18px; border-radius:10px; margin-bottom:20px; font-size:13.5px;}
+      h3{border-right:4px solid #0066FF; padding-right:8px; margin-top:26px;}
+      table.pplan-table, .pplan-meal-table{width:100%; border-collapse:collapse; margin-top:8px; font-size:12.5px;}
+      table.pplan-table th, table.pplan-table td, .pplan-meal-table th, .pplan-meal-table td{border:1px solid #ddd; padding:8px; text-align:right;}
+      table.pplan-table th, .pplan-meal-table th{background:#0066FF; color:#fff;}
+      .supp-badge{display:inline-block; background:#fff4d6; color:#8a6d00; padding:4px 10px; border-radius:99px; font-size:12px; margin:3px;}
+      @media print{ body{padding:12px;} }
+    </style></head>
+  <body>
+    <div class="pplan-header">
+      ${logoHtml}
+      <div>
+        <h1>${esc(db.gym.name)}</h1>
+        <p>برنامج لياقة وتغذية مخصص ${trainerPhotoHtml?'— بإشراف المدرب '+esc(trainer.name):''}</p>
+      </div>
+      ${trainerPhotoHtml}
+    </div>
+    <div class="pplan-client">
+      <div><b>الاسم:</b> ${esc(p.clientName)}</div>
+      <div><b>العمر:</b> ${numAr(p.age)} سنة</div>
+      <div><b>الطول:</b> ${numAr(p.height)} سم</div>
+      <div><b>الوزن:</b> ${numAr(p.weight)} كجم</div>
+      <div><b>الهدف:</b> ${g.emoji} ${esc(g.ar)}</div>
+    </div>
+    <h3>ملخص السعرات والماكروز</h3>
+    <p>السعرات المستهدفة يومياً: <b>${numAr(d.targetCal)}</b> سعرة — بروتين ${numAr(d.proteinG)}g · كارب ${numAr(d.carbG)}g · دهون ${numAr(d.fatG)}g</p>
+    <h3>🍽️ النظام الغذائي</h3>
+    <table class="pplan-meal-table"><thead><tr><th>الوجبة</th><th>المكونات</th><th>السعرات</th></tr></thead><tbody>${mealsHtml}</tbody></table>
+    <h3>🏋️ النظام التمريني — ${esc(d.workoutPlan?d.workoutPlan.name:'')}</h3>
+    ${workoutHtml}
+    <h3>💊 المكملات الغذائية المقترحة</h3>
+    <div>${(d.supplements||[]).map(s=>`<span class="supp-badge">${esc(s)}</span>`).join('')}</div>
+    <p style="margin-top:30px; font-size:11px; color:#999;">تم إنشاء هذا البرنامج بواسطة ${esc(db.gym.name)} — ${formatDate(getTodayStr())}</p>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 350);
+}
+
 function renderTrainerSalaries(){
   const db = App.db;
   const period = getCurrentPeriod();
@@ -3608,6 +4057,41 @@ function openPaySalaryModal(trainerId){
 function getTrainerAttStatusLabel(status){
   return { pending_checkin:'بانتظار اعتماد الدخول', in_progress:'في العمل — دخول معتمد', pending_checkout:'بانتظار اعتماد الانصراف', approved:'معتمد بالكامل' }[status] || status;
 }
+function msToHM(ms){
+  const totalMin = Math.max(0, Math.floor(ms/60000));
+  const h = Math.floor(totalMin/60), m = totalMin%60;
+  return numAr(h)+'س '+numAr(m)+'د';
+}
+/* Remaining-hours display for the 8-hour shift countdown — live while the trainer is still
+   checked in, static once they've checked out. */
+function computeRemainingHoursDisplay(r){
+  const shiftMs = 8*3600*1000;
+  if(!r.checkOut){
+    const inTime = new Date(r.date+'T'+r.checkIn+':00').getTime();
+    const elapsed = Date.now() - inTime;
+    if(elapsed >= shiftMs) return { text:'+'+msToHM(elapsed-shiftMs)+' إضافي', color:'var(--gold)' };
+    const remainMs = shiftMs - elapsed;
+    return { text: msToHM(remainMs), color: remainMs < 3600000 ? 'var(--warning)' : 'var(--cyan)' };
+  }
+  const workedMs = (r.hours||0)*3600000;
+  if(workedMs >= shiftMs) return { text:'اكتملت + '+msToHM(workedMs-shiftMs)+' إضافي', color:'var(--gold)' };
+  return { text: msToHM(shiftMs-workedMs), color:'var(--text-tertiary)' };
+}
+let taCountdownInterval = null;
+function startTaCountdown(){
+  if(taCountdownInterval){ clearInterval(taCountdownInterval); taCountdownInterval=null; }
+  taCountdownInterval = setInterval(()=>{
+    const cells = document.querySelectorAll('[data-countdown-id]');
+    if(!cells.length){ clearInterval(taCountdownInterval); taCountdownInterval=null; return; }
+    cells.forEach(cell=>{
+      const rec = App.db.trainerAttendance.find(x=>x.id===cell.getAttribute('data-countdown-id'));
+      if(!rec) return;
+      const disp = computeRemainingHoursDisplay(rec);
+      cell.textContent = disp.text;
+      cell.style.color = disp.color;
+    });
+  }, 1000);
+}
 function renderTrainerAttendance(){
   const db = App.db;
   const me = App.currentUser;
@@ -3656,28 +4140,30 @@ function renderTrainerAttendance(){
   </div>
   <div class="card">
     <table>
-      <thead><tr><th>المدرب</th><th>دخول</th><th>انصراف</th><th>ساعات العمل</th><th>تأخير/خروج مبكر</th><th>الخصم</th><th>الحالة</th><th></th></tr></thead>
+      <thead><tr><th>المدرب</th><th>دخول</th><th>انصراف</th><th>ساعات العمل</th><th>الساعات المتبقية</th><th>تأخير/خروج مبكر</th><th>الخصم</th><th>الحالة</th><th></th></tr></thead>
       <tbody>
         ${todayRecs.length ? todayRecs.map(r=>{
           const shortfall = (r.lateMinutes||0)+(r.earlyMinutes||0);
+          const remain = computeRemainingHoursDisplay(r);
           return `<tr class="tbl-row">
           <td style="color:#fff; font-weight:700;">${esc(r.trainerName)}</td>
           <td>${esc(r.checkIn)} ${r.checkInApproved?`<span title="معتمد" style="color:var(--success);">${icon('check',11)}</span>`:''}</td>
           <td>${r.checkOut?`${esc(r.checkOut)} ${r.checkOutApproved?`<span title="معتمد" style="color:var(--success);">${icon('check',11)}</span>`:''}`:'<span style="color:var(--text-tertiary);">—</span>'}</td>
           <td style="font-weight:700; color:${r.hours>=8?'var(--success)':'var(--text-secondary)'};">${r.hours?numAr(r.hours)+' ساعة':'—'}</td>
+          <td style="font-weight:700; color:${remain.color};" data-countdown-id="${r.id}">${remain.text}</td>
           <td style="font-size:var(--fs-caption); color:${shortfall>0?'var(--warning)':'var(--text-tertiary)'};">${r.checkOut?(shortfall>0?`${numAr(Math.round(shortfall))} دقيقة`:'التزام كامل'):'—'}</td>
           <td>${r.checkOut ? (r.deductionFraction>0 ? `<span class="badge badge-danger">${r.deductionLabel}</span>` : `<span class="badge badge-success">${r.deductionLabel||'لا يوجد خصم'}</span>`) : '<span style="color:var(--text-tertiary);">—</span>'}</td>
           <td><span class="badge ${r.status==='approved'?'badge-success':r.status==='in_progress'?'badge-info':'badge-warn'}">${getTrainerAttStatusLabel(r.status)}</span></td>
           <td>
             <div style="display:flex; gap:6px;">
-              ${(r.status==='pending_checkin' && canApprove)?`<button class="btn btn-primary btn-sm" data-approvein="${r.id}">${icon('check',13)} اعتماد الدخول</button>`:''}
-              ${(r.status==='pending_checkout' && canApprove)?`<button class="btn btn-primary btn-sm" data-approveout="${r.id}">${icon('check',13)} اعتماد الانصراف</button>`:''}
+              ${(r.status==='pending_checkin' && canApprove)?`<button class="btn btn-primary btn-sm" data-approvein="${r.id}">${icon('check',13)} اعتماد الدخول</button><button class="icon-action" data-rejectin="${r.id}" style="color:var(--danger);" title="رفض الدخول">${icon('x',13)}</button>`:''}
+              ${(r.status==='pending_checkout' && canApprove)?`<button class="btn btn-primary btn-sm" data-approveout="${r.id}">${icon('check',13)} اعتماد الانصراف</button><button class="icon-action" data-rejectout="${r.id}" style="color:var(--danger);" title="رفض الانصراف">${icon('x',13)}</button>`:''}
               ${canEdit?`<button class="icon-action" data-editta="${r.id}" title="تعديل يدوي (مالك)">${icon('edit',13)}</button>`:''}
               ${App.can('deleteGeneral')?`<button class="icon-action" data-delta="${r.id}" style="color:var(--danger);" title="حذف">${icon('trash',13)}</button>`:''}
             </div>
           </td>
         </tr>`;
-        }).join('') : `<tr><td colspan="8"><div class="empty-state">لا يوجد تسجيلات حضور اليوم</div></td></tr>`}
+        }).join('') : `<tr><td colspan="9"><div class="empty-state">لا يوجد تسجيلات حضور اليوم</div></td></tr>`}
       </tbody>
     </table>
   </div>
@@ -3736,12 +4222,25 @@ function bindTrainerAttendanceEvents(){
   document.querySelectorAll('[data-approveout]').forEach(el=>{
     el.addEventListener('click', ()=>{ App.approveCheckOut(el.getAttribute('data-approveout')); refreshPage(); });
   });
+  document.querySelectorAll('[data-rejectin]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const id = el.getAttribute('data-rejectin');
+      confirmAction('رفض تسجيل الدخول','السجل هيتحذف والمدرب هيحتاج يسجل دخوله تاني. متأكد؟', ()=>{ App.rejectCheckIn(id); closeModal(); refreshPage(); });
+    });
+  });
+  document.querySelectorAll('[data-rejectout]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const id = el.getAttribute('data-rejectout');
+      confirmAction('رفض الانصراف','هيرجع السجل لحالة "في العمل" عشان يتسجل الانصراف صح تاني. متأكد؟', ()=>{ App.rejectCheckOut(id); closeModal(); refreshPage(); });
+    });
+  });
   document.querySelectorAll('[data-delta]').forEach(el=>{
     el.addEventListener('click', ()=>{
       const id = el.getAttribute('data-delta');
       confirmAction('حذف السجل','هل تريد حذف سجل الحضور هذا؟', ()=>{ App.deleteTrainerAttendance(id); closeModal(); refreshPage(); });
     });
   });
+  startTaCountdown();
   document.querySelectorAll('[data-editta]').forEach(el=>{
     el.addEventListener('click', ()=>openEditTrainerAttModal(el.getAttribute('data-editta')));
   });
