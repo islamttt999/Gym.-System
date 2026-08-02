@@ -3390,38 +3390,38 @@ function isTrainerDayOff(trainer, dateStr){
 }
 function openTrainerModal(id){
   const db = App.db;
-  const t = id ? db.trainers.find(x=>x.id===id) : {name:'',specialty:'',phone:'',salary:0,commissionPct:10,status:'active',shiftStart:'09:00',shiftEnd:'17:00',dayOff:'fri'};
+  const tr = id ? db.trainers.find(x=>x.id===id) : {name:'',specialty:'',phone:'',salary:0,commissionPct:10,status:'active',shiftStart:'09:00',shiftEnd:'17:00',dayOff:'fri'};
   openModal(`
   <div class="modal-overlay" id="modalOverlay">
     <div class="modal-box animate-modal-in">
-      <div class="modal-header"><div style="font-weight:800;">${id?'تعديل':'إضافة'} مدرب</div><button class="icon-action" id="modalCloseBtn">${icon('x',16)}</button></div>
+      <div class="modal-header"><div style="font-weight:800;">${id?'تعديل':'إضافة'} مدرب</div><button class="icon-action modal-close-btn" id="modalCloseBtn">${icon('x',16)}</button></div>
       <div class="modal-body">
         <div style="display:flex; align-items:center; gap:16px; margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--border-default);">
           <div class="avatar-circle" style="width:64px; height:64px; font-size:24px; background:linear-gradient(135deg, rgba(0,102,255,0.24), rgba(0,212,255,0.08)); color:var(--cyan);" id="trPhotoPreview">
-            ${t.photoUrl?`<img src="${t.photoUrl}" alt="" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />`:esc(getInitials(t.name||'مدرب'))}
+            ${tr.photoUrl?`<img src="${tr.photoUrl}" alt="" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />`:esc(getInitials(tr.name||'مدرب'))}
           </div>
           <div>
             <input type="file" accept="image/*" id="trPhotoFile" style="display:none;" />
             <button class="btn btn-ghost btn-sm" id="trPhotoBtn" type="button">${icon('download',13)} ${esc(t('uploadPhoto_','رفع صورة'))}</button>
-            ${t.photoUrl?`<button class="btn btn-ghost btn-sm" id="trPhotoReset" type="button" style="color:var(--danger);">${icon('x',13)} ${esc(t('removePhoto_','إزالة'))}</button>`:''}
+            ${tr.photoUrl?`<button class="btn btn-ghost btn-sm" id="trPhotoReset" type="button" style="color:var(--danger);">${icon('x',13)} ${esc(t('removePhoto_','إزالة'))}</button>`:''}
           </div>
         </div>
         <div class="grid2">
-          <div style="grid-column:1/-1;"><label class="f-label">الاسم</label><input class="f-input" id="trName" value="${esc(t.name)}" /></div>
-          <div><label class="f-label">التخصص</label><input class="f-input" id="trSpecialty" value="${esc(t.specialty)}" /></div>
-          <div><label class="f-label">الهاتف</label><input class="f-input" id="trPhone" value="${esc(t.phone)}" /></div>
-          <div><label class="f-label">الراتب الأساسي</label><input type="number" class="f-input" id="trSalary" value="${t.salary}" /></div>
-          <div><label class="f-label">نسبة العمولة %</label><input type="number" class="f-input" id="trCommission" value="${t.commissionPct}" /></div>
-          <div><label class="f-label">الحالة</label><select class="f-input" id="trStatus"><option value="active" ${t.status==='active'?'selected':''}>نشط</option><option value="inactive" ${t.status==='inactive'?'selected':''}>موقوف</option></select></div>
+          <div style="grid-column:1/-1;"><label class="f-label">الاسم</label><input class="f-input" id="trName" value="${esc(tr.name)}" /></div>
+          <div><label class="f-label">التخصص</label><input class="f-input" id="trSpecialty" value="${esc(tr.specialty)}" /></div>
+          <div><label class="f-label">الهاتف</label><input class="f-input" id="trPhone" value="${esc(tr.phone)}" /></div>
+          <div><label class="f-label">الراتب الأساسي</label><input type="number" class="f-input" id="trSalary" value="${tr.salary}" /></div>
+          <div><label class="f-label">نسبة العمولة %</label><input type="number" class="f-input" id="trCommission" value="${tr.commissionPct}" /></div>
+          <div><label class="f-label">الحالة</label><select class="f-input" id="trStatus"><option value="active" ${tr.status==='active'?'selected':''}>نشط</option><option value="inactive" ${tr.status==='inactive'?'selected':''}>موقوف</option></select></div>
         </div>
         <div style="margin-top:18px; padding-top:14px; border-top:1px solid var(--border-default);">
           <div class="section-title" style="font-size:var(--fs-body); margin-bottom:10px;"><span class="bar" style="background:linear-gradient(180deg,var(--cyan),var(--blue));"></span> مواعيد الوردية الرسمية</div>
           <div class="grid2">
-            <div><label class="f-label">بداية الوردية</label><input type="time" class="f-input" id="trShiftStart" value="${esc(t.shiftStart||'09:00')}" /></div>
-            <div><label class="f-label">نهاية الوردية</label><input type="time" class="f-input" id="trShiftEnd" value="${esc(t.shiftEnd||'17:00')}" /></div>
+            <div><label class="f-label">بداية الوردية</label><input type="time" class="f-input" id="trShiftStart" value="${esc(tr.shiftStart||'09:00')}" /></div>
+            <div><label class="f-label">نهاية الوردية</label><input type="time" class="f-input" id="trShiftEnd" value="${esc(tr.shiftEnd||'17:00')}" /></div>
             <div style="grid-column:1/-1;"><label class="f-label">يوم الإجازة الأسبوعية</label>
               <select class="f-input" id="trDayOff">
-                ${DAYS_OF_WEEK.map(d=>`<option value="${d.key}" ${((t.dayOff||'fri')===d.key)?'selected':''}>${esc(d.ar)}</option>`).join('')}
+                ${DAYS_OF_WEEK.map(d=>`<option value="${d.key}" ${((tr.dayOff||'fri')===d.key)?'selected':''}>${esc(d.ar)}</option>`).join('')}
               </select>
             </div>
           </div>
@@ -3437,7 +3437,7 @@ function openTrainerModal(id){
   document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
   document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
   document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.target.id==='modalOverlay') closeModal(); });
-  let currentPhotoUrl = t.photoUrl || null;
+  let currentPhotoUrl = tr.photoUrl || null;
   const photoBtn = document.getElementById('trPhotoBtn');
   const photoFile = document.getElementById('trPhotoFile');
   const photoPreview = document.getElementById('trPhotoPreview');
@@ -3940,13 +3940,13 @@ function bindTrainerSalariesEvents(){
 /* Full drill-down: private revenue, commission, this-month subscriptions, member names + attendance. */
 function openTrainerDetailModal(trainerId){
   const db = App.db;
-  const t = db.trainers.find(x=>x.id===trainerId);
-  if(!t) return;
-  const fin = getTrainerFinancials(t, db);
+  const tr = db.trainers.find(x=>x.id===trainerId);
+  if(!tr) return;
+  const fin = getTrainerFinancials(tr, db);
   const ym = getTodayStr().slice(0,7);
-  const monthStats = getTrainerMonthStats(db, t, ym);
-  const allClients = db.members.filter(m=>m.trainerId===t.id);
-  const privateClients = db.privateSessions.filter(s=>s.trainerId===t.id);
+  const monthStats = getTrainerMonthStats(db, tr, ym);
+  const allClients = db.members.filter(m=>m.trainerId===tr.id);
+  const privateClients = db.privateSessions.filter(s=>s.trainerId===tr.id);
 
   const clientsRows = allClients.map(m=>{
     const status = getMemberStatus(m);
@@ -3980,16 +3980,16 @@ function openTrainerDetailModal(trainerId){
     <div class="modal-box animate-modal-in" style="max-width:640px;">
       <div class="modal-header">
         <div style="display:flex; align-items:center; gap:12px;">
-          <div class="avatar-circle" style="width:40px; height:40px; font-size:var(--fs-lg); background:linear-gradient(135deg, rgba(0,102,255,0.24), rgba(0,212,255,0.08)); color:var(--cyan);">${esc(getInitials(t.name))}</div>
-          <div><div style="font-weight:800; font-size:var(--fs-md);">${esc(t.name)}</div><div style="font-size:var(--fs-caption); color:var(--text-tertiary);">${esc(t.specialty)} — ${esc(t.phone)}</div></div>
+          <div class="avatar-circle" style="width:40px; height:40px; font-size:var(--fs-lg); background:linear-gradient(135deg, rgba(0,102,255,0.24), rgba(0,212,255,0.08)); color:var(--cyan);">${esc(getInitials(tr.name))}</div>
+          <div><div style="font-weight:800; font-size:var(--fs-md);">${esc(tr.name)}</div><div style="font-size:var(--fs-caption); color:var(--text-tertiary);">${esc(tr.specialty)} — ${esc(tr.phone)}</div></div>
         </div>
-        <button class="icon-action" id="modalCloseBtn">${icon('x',16)}</button>
+        <button class="icon-action modal-close-btn" id="modalCloseBtn">${icon('x',16)}</button>
       </div>
       <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
         <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
           <div class="kpi-card" style="padding:14px; --kpi-accent:var(--success);"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(fin.subsRevenue)}</div><div class="kpi-label">إيراد الاشتراكات</div></div>
           <div class="kpi-card" style="padding:14px; --kpi-accent:var(--purple);"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(fin.privateRevenue)}</div><div class="kpi-label">إيراد البريفيت</div></div>
-          <div class="kpi-card" style="padding:14px; --kpi-accent:var(--gold);"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(t.commissionPct||0)}%</div><div class="kpi-label">نسبة العمولة</div></div>
+          <div class="kpi-card" style="padding:14px; --kpi-accent:var(--gold);"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(tr.commissionPct||0)}%</div><div class="kpi-label">نسبة العمولة</div></div>
           <div class="kpi-card" style="padding:14px; --kpi-accent:var(--cyan);"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(monthStats.count)}</div><div class="kpi-label">اشتراكات هذا الشهر</div></div>
           <div class="kpi-card" style="padding:14px; --kpi-accent:var(--blue);"><div class="kpi-value" style="font-size:var(--fs-lg);">${numAr(fin.totalCommission)}</div><div class="kpi-label">إجمالي العمولة</div></div>
           <div class="kpi-card" style="padding:14px; --kpi-accent:var(--warning);"><div class="kpi-value" style="font-size:var(--fs-lg); color:${fin.pendingCommission>0?'var(--warning)':'var(--success)'};">${numAr(fin.pendingCommission)}</div><div class="kpi-label">المتبقي له</div></div>
